@@ -1,0 +1,11 @@
+version: "3.9"
+
+services:
+  concordia:
+    build: .
+    image: concordia:local
+    ports:
+      - "8765:8765"
+    env_file:
+      - .env
+    command: ["concordia", "--create-party", "--host", "0.0.0.0", "--public-host", "${PUBLIC_HOST}"]
