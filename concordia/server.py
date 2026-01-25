@@ -38,6 +38,7 @@ class PartyServer:
         self.state = state
         self._last_prompt_ts: Optional[float] = None
         self._lock = asyncio.Lock()
+        self._pump_tasks: List[asyncio.Task] = []
 
     async def start(self, host: str, port: int) -> None:
         async with websockets.serve(self._handler, host, port):
@@ -180,12 +181,30 @@ class PartyServer:
                 stderr=asyncio.subprocess.PIPE,
             )
             await self._broadcast({"type": "system", "message": "claude started (interactive mode)"})
-            asyncio.create_task(self._pump_claude_stdout())
-            asyncio.create_task(self._pump_claude_stderr())
+            self._pump_tasks.append(asyncio.create_task(self._pump_claude_stdout()))
+            self._pump_tasks.append(asyncio.create_task(self._pump_claude_stderr()))
             return True
         except Exception as exc:
             await self._broadcast({"type": "error", "message": f"failed to start claude: {exc}"})
             return False
+
+    async def shutdown(self) -> None:
+        """Cleanup on shutdown."""
+        if self.state.claude_process:
+            self.state.claude_process.terminate()
+            try:
+                await asyncio.wait_for(self.state.claude_process.wait(), timeout=2.0)
+            except (asyncio.TimeoutError, ProcessLookupError):
+                self.state.claude_process.kill()
+        for task in getattr(self, '_pump_tasks', []):
+            task.cancel()
+
+    async def _write_prompt_to_claude(self, prompt: str) -> None:
+        """Write prompt to Claude stdin (future implementation)."""
+        if not self.state.claude_process or not self.state.claude_process.stdin:
+            await self._broadcast({"type": "error", "message": "Claude process not running"})
+            return
+        # TODO: Implement in Task 2
 
     async def _pump_claude_stdout(self) -> None:
         """Stream Claude stdout to all clients."""
@@ -199,8 +218,11 @@ class PartyServer:
                 text = line.decode("utf-8", errors="replace").rstrip()
                 await self._broadcast({"type": "output", "text": text})
                 print(text)
-        except Exception:
+        except asyncio.CancelledError:
             pass
+        except Exception as exc:
+            print(f"Error in stdout pump: {exc}", file=sys.stderr)
+            await self._broadcast({"type": "error", "message": f"stdout pump error: {exc}"})
 
     async def _pump_claude_stderr(self) -> None:
         """Stream Claude stderr to all clients."""
@@ -214,8 +236,11 @@ class PartyServer:
                 text = line.decode("utf-8", errors="replace").rstrip()
                 await self._broadcast({"type": "output", "text": text})
                 print(text, file=sys.stderr)
-        except Exception:
+        except asyncio.CancelledError:
             pass
+        except Exception as exc:
+            print(f"Error in stderr pump: {exc}", file=sys.stderr)
+            await self._broadcast({"type": "error", "message": f"stderr pump error: {exc}"})
 
 
 def create_party_state(
