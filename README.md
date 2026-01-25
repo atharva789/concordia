@@ -31,6 +31,24 @@ concordia_host
 concordia_client concordia://HOST:PORT/TOKEN --user alice
 ```
 
+## Installation Troubleshooting
+
+**"pipx not found"**
+- Install pipx: `brew install pipx` (macOS) or `pip3 install --user pipx`
+- Or let the script use pip instead
+
+**"Claude CLI not found"**
+- Install Claude Code: https://claude.com/claude-code
+- Or pass `--claude-command` to concordia_host for a custom command
+
+**"Python 3.9+ required"**
+- Check version: `python3 --version`
+- Update Python if needed
+
+**"Gemini API key issues"**
+- Get a free key: https://ai.google.dev/
+- Re-run setup: Edit `~/.config/concordia/.env` and add your key
+
 ## Requirements
 
 - Python 3.9+ on all machines
