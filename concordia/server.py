@@ -127,7 +127,14 @@ class PartyServer:
         try:
             combined = await asyncio.to_thread(build_deduped_prompt, prompts, api_key)
         except Exception as exc:
-            await self._broadcast({"type": "error", "message": f"dedupe failed: {exc}"})
+            # If API error (bad key), invalidate it for next run
+            if "Gemini API error" in str(exc):
+                os.environ["GEMINI_API_KEY"] = ""
+                from .config import env_path
+                env_path().write_text("", encoding="utf-8")
+                await self._broadcast({"type": "error", "message": f"API key invalid: {exc}. Restart to re-enter."})
+            else:
+                await self._broadcast({"type": "error", "message": f"dedupe failed: {exc}"})
             return
         await self._broadcast({"type": "system", "message": "running claude"})
         await self._run_claude(combined)
