@@ -1,5 +1,6 @@
 import asyncio
 import os
+import sys
 import tempfile
 import time
 from dataclasses import dataclass, field
@@ -29,6 +30,7 @@ class PartyState:
     min_prompts: int
     pending: List[PromptItem] = field(default_factory=list)
     connections: Dict[str, websockets.WebSocketServerProtocol] = field(default_factory=dict)
+    claude_process: Optional[asyncio.subprocess.Process] = None
 
 
 class PartyServer:
@@ -41,6 +43,7 @@ class PartyServer:
         async with websockets.serve(self._handler, host, port):
             print("party created")
             print(f"invite code: {format_invite(self.state.invite.host, self.state.invite.port, self.state.invite.token)}")
+            await self._start_claude()
             await self._dedupe_loop()
 
     async def _handler(self, websocket: websockets.WebSocketServerProtocol) -> None:
@@ -165,6 +168,54 @@ class PartyServer:
         await asyncio.gather(pump(process.stdout, "stdout"), pump(process.stderr, "stderr"))
         code = await process.wait()
         await self._broadcast({"type": "system", "message": f"claude exited {code}"})
+
+    async def _start_claude(self) -> bool:
+        """Start Claude Code in interactive mode. Returns True if successful."""
+        cmd = self.state.claude_command.replace("{prompt_file}", "-")
+        try:
+            self.state.claude_process = await asyncio.create_subprocess_shell(
+                cmd,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            await self._broadcast({"type": "system", "message": "claude started (interactive mode)"})
+            asyncio.create_task(self._pump_claude_stdout())
+            asyncio.create_task(self._pump_claude_stderr())
+            return True
+        except Exception as exc:
+            await self._broadcast({"type": "error", "message": f"failed to start claude: {exc}"})
+            return False
+
+    async def _pump_claude_stdout(self) -> None:
+        """Stream Claude stdout to all clients."""
+        if not self.state.claude_process or not self.state.claude_process.stdout:
+            return
+        try:
+            while True:
+                line = await self.state.claude_process.stdout.readline()
+                if not line:
+                    break
+                text = line.decode("utf-8", errors="replace").rstrip()
+                await self._broadcast({"type": "output", "text": text})
+                print(text)
+        except Exception:
+            pass
+
+    async def _pump_claude_stderr(self) -> None:
+        """Stream Claude stderr to all clients."""
+        if not self.state.claude_process or not self.state.claude_process.stderr:
+            return
+        try:
+            while True:
+                line = await self.state.claude_process.stderr.readline()
+                if not line:
+                    break
+                text = line.decode("utf-8", errors="replace").rstrip()
+                await self._broadcast({"type": "output", "text": text})
+                print(text, file=sys.stderr)
+        except Exception:
+            pass
 
 
 def create_party_state(
