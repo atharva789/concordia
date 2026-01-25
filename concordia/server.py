@@ -31,6 +31,8 @@ class PartyState:
     pending: List[PromptItem] = field(default_factory=list)
     connections: Dict[str, websockets.WebSocketServerProtocol] = field(default_factory=dict)
     claude_process: Optional[asyncio.subprocess.Process] = None
+    pending_prompts: asyncio.Queue = field(default_factory=asyncio.Queue)
+    claude_busy: bool = False
 
 
 class PartyServer:
@@ -144,7 +146,8 @@ class PartyServer:
                 await self._broadcast({"type": "error", "message": f"dedupe failed: {exc}"})
             return
         await self._broadcast({"type": "system", "message": "running claude"})
-        await self._run_claude(combined)
+        self.state.claude_busy = True
+        await self._write_prompt_to_claude(combined)
 
     async def _run_claude(self, prompt: str) -> None:
         if not prompt.strip():
@@ -203,11 +206,15 @@ class PartyServer:
             task.cancel()
 
     async def _write_prompt_to_claude(self, prompt: str) -> None:
-        """Write prompt to Claude stdin (future implementation)."""
+        """Write prompt to Claude stdin."""
         if not self.state.claude_process or not self.state.claude_process.stdin:
-            await self._broadcast({"type": "error", "message": "Claude process not running"})
+            await self._broadcast({"type": "error", "message": "Claude not running"})
             return
-        # TODO: Implement in Task 2
+        try:
+            self.state.claude_process.stdin.write(prompt.encode() + b"\n")
+            await self.state.claude_process.stdin.drain()
+        except Exception as exc:
+            await self._broadcast({"type": "error", "message": f"Failed to send prompt: {exc}"})
 
     async def _pump_claude_stdout(self) -> None:
         """Stream Claude stdout to all clients."""
@@ -221,6 +228,9 @@ class PartyServer:
                 text = line.decode("utf-8", errors="replace").rstrip()
                 await self._broadcast({"type": "output", "text": text})
                 print(text)
+                if text.strip() == "" or text.strip() == ">":
+                    self.state.claude_busy = False
+                    await self._broadcast({"type": "system", "message": "claude ready for next prompt"})
         except asyncio.CancelledError:
             pass
         except Exception as exc:
