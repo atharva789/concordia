@@ -20,9 +20,8 @@ async def run_client(uri: str, token: str, user: str) -> None:
                 msg = decode(raw)
                 mtype = msg.get("type")
                 if mtype == "output":
-                    stream = msg.get("stream", "stdout")
                     text = msg.get("text", "")
-                    print(f"[{stream}] {text}")
+                    print(text)
                 elif mtype == "system":
                     print(f"[system] {msg.get('message', '')}")
                 elif mtype == "participants":

@@ -19,7 +19,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--port", type=int, default=8765, help="Port to bind (create-party)")
     p.add_argument("--public-host", default=None, help="Public host/IP for invite code")
     p.add_argument("--claude-command", default="claude --prompt-file {prompt_file}")
-    p.add_argument("--dedupe-window", type=float, default=8.0, help="Seconds to wait before dedupe")
+    p.add_argument("--dedupe-window", type=float, default=3.0, help="Seconds to wait before dedupe")
     p.add_argument("--min-prompts", type=int, default=1, help="Minimum prompts before run")
     p.add_argument("--no-local-repl", action="store_true", help="Disable local REPL for creator")
 
