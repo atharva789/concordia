@@ -4,11 +4,18 @@ Concordia is a multi-user prompt party for Claude Code. Users join with an invit
 
 ## Quickstart
 
-1) Install:
+1) Run the smart installation script:
 
 ```bash
-pipx install .
+bash install.sh
 ```
+
+This will:
+- Detect your Python installation
+- Find and use `pipx` (or fall back to `pip`)
+- Install the concordia package
+- Prompt you for your Gemini API key (host only)
+- Check for Claude Code CLI
 
 2) On the host (creator/main user), start a party:
 
