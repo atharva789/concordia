@@ -44,8 +44,11 @@ class PartyServer:
         async with websockets.serve(self._handler, host, port):
             print("party created")
             print(f"invite code: {format_invite(self.state.invite.host, self.state.invite.port, self.state.invite.token)}")
-            await self._start_claude()
-            await self._dedupe_loop()
+            try:
+                await self._start_claude()
+                await self._dedupe_loop()
+            finally:
+                await self.shutdown()
 
     async def _handler(self, websocket: websockets.WebSocketServerProtocol) -> None:
         name = None
