@@ -247,6 +247,69 @@ p.add_argument("--prompt-marker", default=">",
 
 ---
 
+### 5. Ngrok Invite URL Generation
+**Currently:** Manual host:port configuration required
+**Improvement:** Auto-generate invite URLs using ngrok
+**Effort:** 45 min
+**Benefit:** Easy sharing, no port forwarding needed
+
+```python
+import pyngrok.ngrok as ngrok
+
+async def _start_ngrok_tunnel(self, port: int) -> str:
+    tunnel = ngrok.connect(port, "tcp")
+    public_url = tunnel.public_url
+    await self._broadcast({
+        "type": "system",
+        "message": f"Join URL: concordia_client {public_url}"
+    })
+    return public_url
+
+# In main():
+ngrok_tunnel = await server._start_ngrok_tunnel(port)
+try:
+    await server.run()
+finally:
+    ngrok.disconnect(ngrok_tunnel.public_url)
+```
+
+**Setup:**
+```bash
+# Install ngrok
+pip install pyngrok
+
+# Authenticate (once)
+ngrok authtoken YOUR_NGROK_TOKEN
+```
+
+**Configuration:**
+- Set `NGROK_AUTHTOKEN` env var or configure via `ngrok config add-authtoken`
+- Optional: `NGROK_REGION` for regional tunnels (us, eu, ap, au)
+
+**Protocol:**
+- Invite URL format: `concordia://HOST:PORT/TOKEN`
+- Ngrok provides public TCP endpoint: `concordia_client tcp://NGROK_URL/TOKEN`
+
+---
+
+### 6. Dynamic Invite Code with Token
+**Currently:** Static host:port
+**Improvement:** Generate unique token for each party
+**Effort:** 15 min
+**Benefit:** Security, connection verification
+
+```python
+import secrets
+
+class PartyServer:
+    def __init__(self, ...):
+        self._invite_token = secrets.token_urlsafe(8)
+
+    @property
+    def invite_url(self) -> str:
+        return f"concordia://{self._host}:{self._port}/{self._invite_token}"
+```
+
 ## Implementation Roadmap
 
 ### Week 1: Fix Critical Issues

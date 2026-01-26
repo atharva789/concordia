@@ -31,8 +31,7 @@ class PartyState:
     pending: List[PromptItem] = field(default_factory=list)
     connections: Dict[str, websockets.WebSocketServerProtocol] = field(default_factory=dict)
     claude_process: Optional[asyncio.subprocess.Process] = None
-    pending_prompts: asyncio.Queue = field(default_factory=asyncio.Queue)
-    claude_busy: bool = False
+    claude_ready: asyncio.Event = field(default_factory=asyncio.Event)
 
 
 class PartyServer:
@@ -121,6 +120,8 @@ class PartyServer:
                 continue
             if time.time() - self._last_prompt_ts < self.state.dedupe_window:
                 continue
+            if not self.state.claude_ready.is_set():
+                continue
             async with self._lock:
                 batch = list(self.state.pending)
                 self.state.pending.clear()
@@ -146,7 +147,7 @@ class PartyServer:
                 await self._broadcast({"type": "error", "message": f"dedupe failed: {exc}"})
             return
         await self._broadcast({"type": "system", "message": "running claude"})
-        self.state.claude_busy = True
+        self.state.claude_ready.clear()
         await self._write_prompt_to_claude(combined)
 
     async def _run_claude(self, prompt: str) -> None:
@@ -207,14 +208,23 @@ class PartyServer:
 
     async def _write_prompt_to_claude(self, prompt: str) -> None:
         """Write prompt to Claude stdin."""
+        if not prompt.strip():
+            await self._broadcast({"type": "error", "message": "Cannot send empty prompt"})
+            return
         if not self.state.claude_process or not self.state.claude_process.stdin:
             await self._broadcast({"type": "error", "message": "Claude not running"})
+            self.state.claude_ready.set()
             return
         try:
-            self.state.claude_process.stdin.write(prompt.encode() + b"\n")
-            await self.state.claude_process.stdin.drain()
+            async with self._lock:
+                self.state.claude_process.stdin.write(prompt.encode() + b"\n")
+                await asyncio.wait_for(self.state.claude_process.stdin.drain(), timeout=5.0)
+        except asyncio.TimeoutError:
+            await self._broadcast({"type": "error", "message": "Prompt delivery timeout"})
+            self.state.claude_ready.set()
         except Exception as exc:
             await self._broadcast({"type": "error", "message": f"Failed to send prompt: {exc}"})
+            self.state.claude_ready.set()
 
     async def _pump_claude_stdout(self) -> None:
         """Stream Claude stdout to all clients."""
@@ -224,12 +234,14 @@ class PartyServer:
             while True:
                 line = await self.state.claude_process.stdout.readline()
                 if not line:
+                    self.state.claude_ready.set()
+                    await self._broadcast({"type": "system", "message": "claude disconnected"})
                     break
                 text = line.decode("utf-8", errors="replace").rstrip()
                 await self._broadcast({"type": "output", "text": text})
                 print(text)
-                if text.strip() == "" or text.strip() == ">":
-                    self.state.claude_busy = False
+                if text == ">" or text.endswith(">>> "):
+                    self.state.claude_ready.set()
                     await self._broadcast({"type": "system", "message": "claude ready for next prompt"})
         except asyncio.CancelledError:
             pass
