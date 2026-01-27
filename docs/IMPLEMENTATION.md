@@ -10,11 +10,11 @@
 - Claude in interactive mode (Task 1)
 - Output streaming to all participants
 - Shell access via `/shell` command
+- ngrok integration (--ngrok flag added)
 
-❌ **Issues (Task 2 - See TASK2-ISSUES.md):**
-- 5 Critical race conditions/deadlocks
-- 4 Important safety issues
-- 3 Warnings
+❌ **Issues:**
+- **Task 2** (See TASK2-ISSUES.md): 5 Critical race conditions, 4 Important safety issues, 3 Warnings
+- **ngrok Port Mismatch**: Invite codes use local port instead of ngrok remote port (clients can't connect)
 
 ⚠️ **Design Gaps:**
 - No queue-based prompt buffering

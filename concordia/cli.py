@@ -5,7 +5,7 @@ import os
 from pyngrok import ngrok
 
 from .client import run_client
-from .config import ensure_gemini_key_interactive
+from .config import ensure_gemini_key_interactive, load_env
 from .server import run_server
 from .utils import default_username, fetch_public_ip, generate_token, guess_public_host, parse_invite, format_invite
 
@@ -35,6 +35,7 @@ def _ws_uri(host: str, port: int) -> str:
 
 
 async def _run_create_party(args: argparse.Namespace) -> None:
+    load_env()
     key = ensure_gemini_key_interactive()
     if not key:
         raise SystemExit("Missing GEMINI_API_KEY")
