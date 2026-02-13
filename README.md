@@ -17,6 +17,12 @@ This will:
 - Prompt you for your Gemini API key (host only)
 - Check for Claude Code CLI
 
+Before hosting, set your ngrok auth token (required):
+
+```bash
+export NGROK_AUTHTOKEN=YOUR_NGROK_TOKEN
+```
+
 2) On the host (creator/main user), start a party:
 
 ```bash
@@ -28,7 +34,7 @@ concordia_host
 4) Join from another machine:
 
 ```bash
-concordia_client concordia://HOST:PORT/TOKEN --user alice
+concordia_client <paste-invite-from-host-terminal> --user alice
 ```
 
 ## Installation Troubleshooting
@@ -54,6 +60,7 @@ concordia_client concordia://HOST:PORT/TOKEN --user alice
 - Python 3.9+ on all machines
 - Claude Code CLI on the party creator's machine (`claude` on PATH)
 - Gemini API key on the host only
+- ngrok auth token on the host (`NGROK_AUTHTOKEN`)
 
 ## Install (global)
 
@@ -88,16 +95,16 @@ You can edit that file later if needed.
 ## Options
 
 ```bash
-concordia_host --public-host 203.0.113.10 --port 9000 --dedupe-window 6 --min-prompts 2
-concordia_client concordia://203.0.113.10:9000/abc123 --user bob
+concordia_host --port 9000 --dedupe-window 6 --min-prompts 2
+concordia_client concordia://<ngrok-host>:<ngrok-port>/abc123 --user bob
 ```
 
 ## Notes
 
-- Ensure your firewall allows inbound traffic on the chosen port.
+- ngrok is required for hosting; invite host/port are always derived from the ngrok tunnel.
 - Set `--no-local-repl` to run a server without the creator's local REPL.
 - The `--claude-command` flag can override how Claude Code is invoked (default: `claude --prompt-file {prompt_file}`).
-- Public IP is auto-detected on host startup; override with `--public-host` if needed.
+- `--public-host` and `--ngrok` flags are deprecated and ignored.
 
 ## Docker
 
@@ -108,8 +115,9 @@ docker build -t concordia .
 docker run --rm -it \\
   -p 8765:8765 \\
   --env GEMINI_API_KEY=YOUR_KEY \\
+  --env NGROK_AUTHTOKEN=YOUR_NGROK_TOKEN \\
   concordia \\
-  concordia --create-party --host 0.0.0.0 --public-host YOUR_PUBLIC_IP
+  concordia --create-party --host 0.0.0.0
 ```
 
 Or with docker-compose (uses `.env`):
@@ -118,12 +126,12 @@ Or with docker-compose (uses `.env`):
 docker compose up --build
 ```
 
-Set `PUBLIC_HOST` in `.env`.
+Set `GEMINI_API_KEY` and `NGROK_AUTHTOKEN` in `.env`.
 
 Join from another machine:
 
 ```bash
-concordia_client concordia://YOUR_PUBLIC_IP:8765/TOKEN --user alice
+concordia_client concordia://<ngrok-host>:<ngrok-port>/TOKEN --user alice
 ```
 
 Notes:

@@ -8,7 +8,7 @@ from .client import run_client
 from .config import ensure_gemini_key_interactive, load_env
 from .debug import debug_print
 from .server import run_server
-from .utils import default_username, fetch_public_ip, generate_token, guess_public_host, parse_invite, format_invite
+from .utils import default_username, generate_token, parse_invite
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -21,12 +21,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     p.add_argument("--host", default="0.0.0.0", help="Host to bind (create-party)")
     p.add_argument("--port", type=int, default=8765, help="Port to bind (create-party)")
-    p.add_argument("--public-host", default=None, help="Public host/IP for invite code (auto-detected with --ngrok)")
+    p.add_argument("--public-host", default=None, help="Deprecated: ignored. Host is derived from ngrok tunnel.")
     p.add_argument("--claude-command", default="cat {prompt_file} | claude")
     p.add_argument("--dedupe-window", type=float, default=3.0, help="Seconds to wait before dedupe")
     p.add_argument("--min-prompts", type=int, default=1, help="Minimum prompts before run")
     p.add_argument("--no-local-repl", action="store_true", help="Disable local REPL for creator")
-    p.add_argument("--ngrok", action="store_true", help="Use ngrok to create public tunnel (auto-generates invite URL)")
+    p.add_argument("--ngrok", action="store_true", help="Deprecated: ngrok is always enabled for party creation.")
 
     return p
 
@@ -41,24 +41,19 @@ async def _run_create_party(args: argparse.Namespace) -> None:
     if not key:
         raise SystemExit("Missing GEMINI_API_KEY")
 
-    ngrok_tunnel = None
-    public_host = args.public_host
+    authtoken = os.environ.get("NGROK_AUTHTOKEN", "").strip()
+    if not authtoken:
+        raise SystemExit("Missing NGROK_AUTHTOKEN")
 
-    if args.ngrok:
-        authtoken = os.environ.get("NGROK_AUTHTOKEN", "")
-        if authtoken:
-            ngrok.set_auth_token(authtoken)
-        tunnel = ngrok.connect(args.port, "tcp")
-        ngrok_tunnel = tunnel
-        public_host, public_port = tunnel.public_url.replace("tcp://", "").split(":")[0], tunnel.public_url.replace("tcp://", "").split(":")[1]
-        debug_print(f"PUBLIC_HOST: {public_host}, PUBLIC_PORT: {public_port}")
-        debug_print(f"ngrok tunnel created: tcp://{tunnel.public_url}")
-    else:
-        debug_print("NGROK not loaded, exiting…")
-        return
-
-    if not public_host:
-        public_host = fetch_public_ip() or guess_public_host()
+    ngrok.set_auth_token(authtoken)
+    ngrok_tunnel = ngrok.connect(args.port, "tcp")
+    endpoint = ngrok_tunnel.public_url.replace("tcp://", "", 1)
+    if ":" not in endpoint:
+        raise SystemExit(f"Invalid ngrok public URL: {ngrok_tunnel.public_url}")
+    public_host, public_port_str = endpoint.rsplit(":", 1)
+    public_port = int(public_port_str)
+    debug_print(f"PUBLIC_HOST: {public_host}, PUBLIC_PORT: {public_port}")
+    debug_print(f"ngrok tunnel created: {ngrok_tunnel.public_url}")
 
     token = generate_token(16)
 
@@ -69,14 +64,14 @@ async def _run_create_party(args: argparse.Namespace) -> None:
                 host=args.host,
                 port=args.port,
                 public_host=public_host,
+                invite_port=public_port,
                 claude_command=args.claude_command,
                 dedupe_window=args.dedupe_window,
                 min_prompts=args.min_prompts,
                 token=token,
             )
         finally:
-            if ngrok_tunnel:
-                ngrok.disconnect(ngrok_tunnel)
+            ngrok.disconnect(ngrok_tunnel.public_url)
 
     server_task = asyncio.create_task(run_with_cleanup())
 

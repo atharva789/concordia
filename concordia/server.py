@@ -185,6 +185,7 @@ class PartyServer:
     async def _start_claude(self) -> bool:
         """Start Claude Code in interactive mode. Returns True if successful."""
         cmd = self.state.claude_command.replace("{prompt_file}", "-")
+        debug_print(f"Running claude command: {cmd}")
         try:
             debug_print("[CLAUDE-CODE-CONCORDIA] attempting claude run")
             self.state.claude_process = await asyncio.create_subprocess_shell(
@@ -280,13 +281,14 @@ def create_party_state(
     host: str,
     port: int,
     public_host: str,
+    invite_port: int,
     claude_command: str,
     dedupe_window: float,
     min_prompts: int,
     token: Optional[str] = None,
 ) -> PartyState:
     token = token or generate_token(16)
-    invite = Invite(host=public_host, port=port, token=token)
+    invite = Invite(host=public_host, port=invite_port, token=token)
     return PartyState(
         invite=invite,
         creator=creator,
@@ -301,6 +303,7 @@ async def run_server(
     host: str,
     port: int,
     public_host: str,
+    invite_port: int,
     claude_command: str,
     dedupe_window: float,
     min_prompts: int,
@@ -308,7 +311,7 @@ async def run_server(
 ) -> None:
     load_env()
     state = create_party_state(
-        creator, host, port, public_host, claude_command, dedupe_window, min_prompts, token=token
+        creator, host, port, public_host, invite_port, claude_command, dedupe_window, min_prompts, token=token
     )
     server = PartyServer(state)
     await server.start(host, port)
