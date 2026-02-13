@@ -11,6 +11,7 @@ import websockets
 from .dedupe import build_deduped_prompt
 from .protocol import decode, encode
 from .config import load_env
+from .debug import debug_print
 from .utils import Invite, format_invite, generate_token
 
 
@@ -43,12 +44,16 @@ class PartyServer:
 
     async def start(self, host: str, port: int) -> None:
         async with websockets.serve(self._handler, host, port):
-            print("party created")
-            print(f"invite code: {format_invite(self.state.invite.host, self.state.invite.port, self.state.invite.token)}")
+            debug_print("party created")
+            debug_print(f"invite code: {format_invite(self.state.invite.host, self.state.invite.port, self.state.invite.token)}")
             try:
-                await self._start_claude()
+                res = await self._start_claude()
+                if not res:
+                    debug_print("[CMD] Failed to run claude")
+                    await self.shutdown()
                 await self._dedupe_loop()
             finally:
+                debug_print("[CMD] Failed to run claude")
                 await self.shutdown()
 
     async def _handler(self, websocket: websockets.WebSocketServerProtocol) -> None:
@@ -171,7 +176,7 @@ class PartyServer:
                     break
                 text = line.decode("utf-8", errors="replace").rstrip()
                 await self._broadcast({"type": "output", "stream": label, "text": text})
-                print(text)
+                debug_print(text)
 
         await asyncio.gather(pump(process.stdout, "stdout"), pump(process.stderr, "stderr"))
         code = await process.wait()
@@ -181,6 +186,7 @@ class PartyServer:
         """Start Claude Code in interactive mode. Returns True if successful."""
         cmd = self.state.claude_command.replace("{prompt_file}", "-")
         try:
+            debug_print("[CLAUDE-CODE-CONCORDIA] attempting claude run")
             self.state.claude_process = await asyncio.create_subprocess_shell(
                 cmd,
                 stdin=asyncio.subprocess.PIPE,
@@ -192,6 +198,7 @@ class PartyServer:
             self._pump_tasks.append(asyncio.create_task(self._pump_claude_stderr()))
             return True
         except Exception as exc:
+            debug_print(f"[ERROR] failed to start claude: {exc}", file=sys.stderr)
             await self._broadcast({"type": "error", "message": f"failed to start claude: {exc}"})
             return False
 
@@ -239,14 +246,14 @@ class PartyServer:
                     break
                 text = line.decode("utf-8", errors="replace").rstrip()
                 await self._broadcast({"type": "output", "text": text})
-                print(text)
+                debug_print(text)
                 if text == ">" or text.endswith(">>> "):
                     self.state.claude_ready.set()
                     await self._broadcast({"type": "system", "message": "claude ready for next prompt"})
         except asyncio.CancelledError:
             pass
         except Exception as exc:
-            print(f"Error in stdout pump: {exc}", file=sys.stderr)
+            debug_print(f"Error in stdout pump: {exc}", file=sys.stderr)
             await self._broadcast({"type": "error", "message": f"stdout pump error: {exc}"})
 
     async def _pump_claude_stderr(self) -> None:
@@ -260,11 +267,11 @@ class PartyServer:
                     break
                 text = line.decode("utf-8", errors="replace").rstrip()
                 await self._broadcast({"type": "output", "text": text})
-                print(text, file=sys.stderr)
+                debug_print(text, file=sys.stderr)
         except asyncio.CancelledError:
             pass
         except Exception as exc:
-            print(f"Error in stderr pump: {exc}", file=sys.stderr)
+            debug_print(f"Error in stderr pump: {exc}", file=sys.stderr)
             await self._broadcast({"type": "error", "message": f"stderr pump error: {exc}"})
 
 

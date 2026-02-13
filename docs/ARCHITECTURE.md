@@ -28,10 +28,13 @@
 host_cli.py:main()
   └─→ cli.py:build_parser()
   └─→ cli.py:_run_create_party(args)
-       ├─→ config.py:ensure_gemini_key_interactive()
-       │    ├─→ Checks GEMINI_API_KEY env var
-       │    ├─→ If missing: prompts user interactively
-       │    └─→ Saves to ~/.config/concordia/.env
+        ├─→ config.py:load_env()
+        │    └─→ Loads ~/.config/concordia/.env into environment
+        │
+        ├─→ config.py:ensure_gemini_key_interactive()
+        │    ├─→ Checks GEMINI_API_KEY env var (now populated from .env)
+        │    ├─→ If missing: prompts user interactively
+        │    └─→ Saves to ~/.config/concordia/.env
        │
        ├─→ utils.py:fetch_public_ip() or guess_public_host()
        │    └─→ Detects public IP for invite code

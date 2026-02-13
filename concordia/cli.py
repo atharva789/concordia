@@ -6,6 +6,7 @@ from pyngrok import ngrok
 
 from .client import run_client
 from .config import ensure_gemini_key_interactive, load_env
+from .debug import debug_print
 from .server import run_server
 from .utils import default_username, fetch_public_ip, generate_token, guess_public_host, parse_invite, format_invite
 
@@ -49,8 +50,12 @@ async def _run_create_party(args: argparse.Namespace) -> None:
             ngrok.set_auth_token(authtoken)
         tunnel = ngrok.connect(args.port, "tcp")
         ngrok_tunnel = tunnel
-        public_host = tunnel.public_url.replace("tcp://", "").split(":")[0]
-        print(f"ngrok tunnel created: tcp://{tunnel.public_url}")
+        public_host, public_port = tunnel.public_url.replace("tcp://", "").split(":")[0], tunnel.public_url.replace("tcp://", "").split(":")[1]
+        debug_print(f"PUBLIC_HOST: {public_host}, PUBLIC_PORT: {public_port}")
+        debug_print(f"ngrok tunnel created: tcp://{tunnel.public_url}")
+    else:
+        debug_print("NGROK not loaded, exiting…")
+        return
 
     if not public_host:
         public_host = fetch_public_ip() or guess_public_host()
