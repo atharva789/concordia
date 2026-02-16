@@ -1,14 +1,16 @@
 import asyncio
 import os
+import shlex
 import sys
 import tempfile
 import time
+from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
 import websockets
 
-from .dedupe import build_deduped_prompt
+from .dedupe import build_deduped_prompt, build_session_summary
 from .protocol import decode, encode
 from .config import load_env
 from .debug import debug_print
@@ -29,18 +31,24 @@ class PartyState:
     claude_command: str
     dedupe_window: float
     min_prompts: int
+    project_dir: str
+    claude_start_cmd: str = ""
+    claude_session_id: str = ""
+    env: Dict[str, str] = field(default_factory=dict)
     pending: List[PromptItem] = field(default_factory=list)
     connections: Dict[str, websockets.WebSocketServerProtocol] = field(default_factory=dict)
-    claude_process: Optional[asyncio.subprocess.Process] = None
-    claude_ready: asyncio.Event = field(default_factory=asyncio.Event)
+    prompt_log_path: Optional[str] = None
+    deduped_prompts: List[str] = field(default_factory=list)
+    context_written: bool = False
 
 
 class PartyServer:
     def __init__(self, state: PartyState):
         self.state = state
+        self.start_cmd: str = """claude -p "understand the codebase" --dangerously-skip-permissions --output-format json | jq -r '.session_id'"""
+        self.state.claude_start_cmd = self.start_cmd
         self._last_prompt_ts: Optional[float] = None
         self._lock = asyncio.Lock()
-        self._pump_tasks: List[asyncio.Task] = []
 
     async def start(self, host: str, port: int) -> None:
         async with websockets.serve(self._handler, host, port):
@@ -51,9 +59,9 @@ class PartyServer:
                 if not res:
                     debug_print("[CMD] Failed to run claude")
                     await self.shutdown()
+                    return
                 await self._dedupe_loop()
             finally:
-                debug_print("[CMD] Failed to run claude")
                 await self.shutdown()
 
     async def _handler(self, websocket: websockets.WebSocketServerProtocol) -> None:
@@ -125,14 +133,13 @@ class PartyServer:
                 continue
             if time.time() - self._last_prompt_ts < self.state.dedupe_window:
                 continue
-            if not self.state.claude_ready.is_set():
-                continue
             async with self._lock:
                 batch = list(self.state.pending)
                 self.state.pending.clear()
                 self._last_prompt_ts = None
             if len(batch) < self.state.min_prompts:
                 continue
+            debug_print("[_dedupe_loop() prompt deduped!]")
             await self._process_batch(batch)
 
     async def _process_batch(self, batch: List[PromptItem]) -> None:
@@ -152,51 +159,40 @@ class PartyServer:
                 await self._broadcast({"type": "error", "message": f"dedupe failed: {exc}"})
             return
         await self._broadcast({"type": "system", "message": "running claude"})
-        self.state.claude_ready.clear()
+        self.state.deduped_prompts.append(combined)
         await self._write_prompt_to_claude(combined)
 
-    async def _run_claude(self, prompt: str) -> None:
-        if not prompt.strip():
-            await self._broadcast({"type": "error", "message": "empty prompt"})
-            return
-        with tempfile.NamedTemporaryFile("w", delete=False, suffix=".prompt", encoding="utf-8") as f:
-            f.write(prompt)
-            prompt_path = f.name
-        cmd = self.state.claude_command.format(prompt_file=prompt_path)
-        process = await asyncio.create_subprocess_shell(
-            cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-
-        async def pump(stream, label: str) -> None:
-            while True:
-                line = await stream.readline()
-                if not line:
-                    break
-                text = line.decode("utf-8", errors="replace").rstrip()
-                await self._broadcast({"type": "output", "stream": label, "text": text})
-                debug_print(text)
-
-        await asyncio.gather(pump(process.stdout, "stdout"), pump(process.stderr, "stderr"))
-        code = await process.wait()
-        await self._broadcast({"type": "system", "message": f"claude exited {code}"})
-
     async def _start_claude(self) -> bool:
-        """Start Claude Code in interactive mode. Returns True if successful."""
-        cmd = self.state.claude_command.replace("{prompt_file}", "-")
+        """Start Claude once and capture a resumable session id."""
+        prompt_file = tempfile.NamedTemporaryFile("w", delete=False, suffix=".prompt", encoding="utf-8")
+        prompt_file.close()
+        self.state.prompt_log_path = prompt_file.name
+        self.state.env = os.environ.copy()
+        self.state.env.pop("ANTROPIC_API_KEY", None)
+        self.state.env.pop("ANTHROPIC_API_KEY", None)
+        cmd = self.start_cmd
         debug_print(f"Running claude command: {cmd}")
+        debug_print(f"Session prompt log: {self.state.prompt_log_path}")
         try:
-            debug_print("[CLAUDE-CODE-CONCORDIA] attempting claude run")
-            self.state.claude_process = await asyncio.create_subprocess_shell(
+            process = await asyncio.create_subprocess_shell(
                 cmd,
-                stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                cwd=self.state.project_dir if self.state.project_dir else None,
+                env=self.state.env,
             )
+            stdout, stderr = await process.communicate()
+            stderr_text = stderr.decode("utf-8", errors="replace").strip() if stderr else ""
+            if stderr_text:
+                debug_print(f"[start_claude()] stderr: {stderr_text}", file=sys.stderr)
+
+            self.state.claude_session_id = stdout.decode("utf-8", errors="replace").strip() if stdout else ""
+            if process.returncode != 0 or not self.state.claude_session_id:
+                debug_print("[start_claude()] Failed to get session id", file=sys.stderr)
+                return False
+
             await self._broadcast({"type": "system", "message": "claude started (interactive mode)"})
-            self._pump_tasks.append(asyncio.create_task(self._pump_claude_stdout()))
-            self._pump_tasks.append(asyncio.create_task(self._pump_claude_stderr()))
+            debug_print(f"[start_claude()] Session ID: {self.state.claude_session_id}")
             return True
         except Exception as exc:
             debug_print(f"[ERROR] failed to start claude: {exc}", file=sys.stderr)
@@ -205,75 +201,99 @@ class PartyServer:
 
     async def shutdown(self) -> None:
         """Cleanup on shutdown."""
-        if self.state.claude_process:
-            self.state.claude_process.terminate()
+        await self._write_context_file()
+        if self.state.prompt_log_path:
             try:
-                await asyncio.wait_for(self.state.claude_process.wait(), timeout=2.0)
-            except (asyncio.TimeoutError, ProcessLookupError):
-                self.state.claude_process.kill()
-        for task in getattr(self, '_pump_tasks', []):
-            task.cancel()
+                os.unlink(self.state.prompt_log_path)
+            except OSError:
+                pass
+            self.state.prompt_log_path = None
 
     async def _write_prompt_to_claude(self, prompt: str) -> None:
-        """Write prompt to Claude stdin."""
+        """Resume Claude session with prompt and stream result to participants."""
         if not prompt.strip():
             await self._broadcast({"type": "error", "message": "Cannot send empty prompt"})
             return
-        if not self.state.claude_process or not self.state.claude_process.stdin:
-            await self._broadcast({"type": "error", "message": "Claude not running"})
-            self.state.claude_ready.set()
+        if not self.state.claude_session_id:
+            await self._broadcast({"type": "error", "message": "Claude session not initialized"})
             return
         try:
             async with self._lock:
-                self.state.claude_process.stdin.write(prompt.encode() + b"\n")
-                await asyncio.wait_for(self.state.claude_process.stdin.drain(), timeout=5.0)
-        except asyncio.TimeoutError:
-            await self._broadcast({"type": "error", "message": "Prompt delivery timeout"})
-            self.state.claude_ready.set()
+                if self.state.prompt_log_path:
+                    with open(self.state.prompt_log_path, "a", encoding="utf-8") as f:
+                        f.write(prompt.rstrip() + "\n\n")
+                cmd = (
+                    f"claude -p {shlex.quote(prompt)} "
+                    f"--resume {shlex.quote(self.state.claude_session_id)} "
+                    "--dangerously-skip-permissions"
+                )
+                process = await asyncio.create_subprocess_shell(
+                    cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=self.state.project_dir if self.state.project_dir else None,
+                    env=self.state.env,
+                )
+                stdout, stderr = await process.communicate()
+                stdout_text = stdout.decode("utf-8", errors="replace").strip() if stdout else ""
+                stderr_text = stderr.decode("utf-8", errors="replace").strip() if stderr else ""
+
+                if process.returncode != 0:
+                    if stdout_text:
+                        for line in stdout_text.splitlines():
+                            await self._broadcast({"type": "output", "text": line})
+                    if stderr_text:
+                        for line in stderr_text.splitlines():
+                            await self._broadcast({"type": "output", "text": line})
+                    await self._broadcast(
+                        {
+                            "type": "error",
+                            "message": f"claude command failed (code={process.returncode})",
+                        }
+                    )
+                    return
+
+                if stderr_text:
+                    for line in stderr_text.splitlines():
+                        await self._broadcast({"type": "output", "text": line})
+                if stdout_text:
+                    for line in stdout_text.splitlines():
+                        await self._broadcast({"type": "output", "text": line})
         except Exception as exc:
             await self._broadcast({"type": "error", "message": f"Failed to send prompt: {exc}"})
-            self.state.claude_ready.set()
 
-    async def _pump_claude_stdout(self) -> None:
-        """Stream Claude stdout to all clients."""
-        if not self.state.claude_process or not self.state.claude_process.stdout:
+    async def _write_context_file(self) -> None:
+        if self.state.context_written:
             return
-        try:
-            while True:
-                line = await self.state.claude_process.stdout.readline()
-                if not line:
-                    self.state.claude_ready.set()
-                    await self._broadcast({"type": "system", "message": "claude disconnected"})
-                    break
-                text = line.decode("utf-8", errors="replace").rstrip()
-                await self._broadcast({"type": "output", "text": text})
-                debug_print(text)
-                if text == ">" or text.endswith(">>> "):
-                    self.state.claude_ready.set()
-                    await self._broadcast({"type": "system", "message": "claude ready for next prompt"})
-        except asyncio.CancelledError:
-            pass
-        except Exception as exc:
-            debug_print(f"Error in stdout pump: {exc}", file=sys.stderr)
-            await self._broadcast({"type": "error", "message": f"stdout pump error: {exc}"})
+        self.state.context_written = True
 
-    async def _pump_claude_stderr(self) -> None:
-        """Stream Claude stderr to all clients."""
-        if not self.state.claude_process or not self.state.claude_process.stderr:
+        output_path = Path.cwd() / "concordia-context.md"
+        prompts = [p.strip() for p in self.state.deduped_prompts if p.strip()]
+        if not prompts:
+            content = "# Concordia Context\n\nNo deduped prompts were processed in this session.\n"
+            output_path.write_text(content, encoding="utf-8")
+            debug_print(f"Wrote {output_path}")
             return
+
+        api_key = os.environ.get("GEMINI_API_KEY", "").strip()
         try:
-            while True:
-                line = await self.state.claude_process.stderr.readline()
-                if not line:
-                    break
-                text = line.decode("utf-8", errors="replace").rstrip()
-                await self._broadcast({"type": "output", "text": text})
-                debug_print(text, file=sys.stderr)
-        except asyncio.CancelledError:
-            pass
+            summary = await asyncio.to_thread(build_session_summary, prompts, api_key)
         except Exception as exc:
-            debug_print(f"Error in stderr pump: {exc}", file=sys.stderr)
-            await self._broadcast({"type": "error", "message": f"stderr pump error: {exc}"})
+            debug_print(f"Context summary generation failed: {exc}", file=sys.stderr)
+            summary = self._fallback_context_summary(prompts)
+
+        body = summary.strip() if summary.strip() else self._fallback_context_summary(prompts)
+        content = f"# Concordia Context\n\n{body}\n"
+        output_path.write_text(content, encoding="utf-8")
+        debug_print(f"Wrote {output_path}")
+
+    def _fallback_context_summary(self, prompts: List[str]) -> str:
+        lines = ["## Deduped Prompts", ""]
+        for idx, prompt in enumerate(prompts, start=1):
+            lines.append(f"### Prompt {idx}")
+            lines.append(prompt)
+            lines.append("")
+        return "\n".join(lines).rstrip()
 
 
 def create_party_state(
@@ -282,6 +302,7 @@ def create_party_state(
     port: int,
     public_host: str,
     invite_port: int,
+    project_dir: str,
     claude_command: str,
     dedupe_window: float,
     min_prompts: int,
@@ -293,6 +314,7 @@ def create_party_state(
         invite=invite,
         creator=creator,
         claude_command=claude_command,
+        project_dir=project_dir,
         dedupe_window=dedupe_window,
         min_prompts=min_prompts,
     )
@@ -304,6 +326,7 @@ async def run_server(
     port: int,
     public_host: str,
     invite_port: int,
+    project_dir: str,
     claude_command: str,
     dedupe_window: float,
     min_prompts: int,
@@ -311,7 +334,16 @@ async def run_server(
 ) -> None:
     load_env()
     state = create_party_state(
-        creator, host, port, public_host, invite_port, claude_command, dedupe_window, min_prompts, token=token
+        creator,
+        host,
+        port,
+        public_host,
+        invite_port,
+        project_dir,
+        claude_command,
+        dedupe_window,
+        min_prompts,
+        token=token,
     )
     server = PartyServer(state)
     await server.start(host, port)

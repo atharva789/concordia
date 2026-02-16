@@ -45,7 +45,6 @@ concordia_client <paste-invite-from-host-terminal> --user alice
 
 **"Claude CLI not found"**
 - Install Claude Code: https://claude.com/claude-code
-- Or pass `--claude-command` to concordia_host for a custom command
 
 **"Python 3.9+ required"**
 - Check version: `python3 --version`
@@ -90,20 +89,23 @@ You can edit that file later if needed.
 
 - The creator runs the server and is the main user; all Claude Code commands are executed locally by the creator.
 - Participants submit prompts; the Gemini deduper merges them into a single multi-step prompt.
-- Claude Code output is broadcast to every participant's REPL.
+- On startup, Concordia creates a Claude session and stores the returned `session_id`.
+- For each deduped prompt batch, Concordia resumes that Claude session (`--resume <session_id>`) in the configured project directory.
+- Claude output is broadcast to every participant's REPL.
 
 ## Options
 
 ```bash
-concordia_host --port 9000 --dedupe-window 6 --min-prompts 2
+concordia_host --port 9000 --project-dir ~/my-project --dedupe-window 6 --min-prompts 2
 concordia_client concordia://<ngrok-host>:<ngrok-port>/abc123 --user bob
 ```
 
 ## Notes
 
 - ngrok is required for hosting; invite host/port are always derived from the ngrok tunnel.
+- `--project-dir` controls the working directory used for Claude session start/resume commands.
 - Set `--no-local-repl` to run a server without the creator's local REPL.
-- The `--claude-command` flag can override how Claude Code is invoked (default: `claude --prompt-file {prompt_file}`).
+- Claude execution uses session start + `--resume` internally; `--claude-command` is currently not used by runtime execution.
 - `--public-host` and `--ngrok` flags are deprecated and ignored.
 
 ## Docker

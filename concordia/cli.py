@@ -1,6 +1,7 @@
 import argparse
 import asyncio
 import os
+from pathlib import Path
 
 from pyngrok import ngrok
 
@@ -25,6 +26,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--claude-command", default="cat {prompt_file} | claude")
     p.add_argument("--dedupe-window", type=float, default=3.0, help="Seconds to wait before dedupe")
     p.add_argument("--min-prompts", type=int, default=1, help="Minimum prompts before run")
+    p.add_argument("--project-dir", default=str(Path.cwd()), help="Project directory Claude should operate in")
     p.add_argument("--no-local-repl", action="store_true", help="Disable local REPL for creator")
     p.add_argument("--ngrok", action="store_true", help="Deprecated: ngrok is always enabled for party creation.")
 
@@ -65,6 +67,7 @@ async def _run_create_party(args: argparse.Namespace) -> None:
                 port=args.port,
                 public_host=public_host,
                 invite_port=public_port,
+                project_dir=os.path.expanduser(args.project_dir),
                 claude_command=args.claude_command,
                 dedupe_window=args.dedupe_window,
                 min_prompts=args.min_prompts,
