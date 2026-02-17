@@ -29,6 +29,7 @@ cli.py:_run_create_party()
 ```
 
 **Code at cli.py:38:**
+
 ```python
 async def _run_create_party(args: argparse.Namespace) -> None:
     key = ensure_gemini_key_interactive()  # Checks env BEFORE load_env()
@@ -48,6 +49,7 @@ The `ensure_gemini_key_interactive()` function checks `os.environ.get("GEMINI_AP
 2. Called `load_env()` before `ensure_gemini_key_interactive()`
 
 **Diff:**
+
 ```diff
 - from .config import ensure_gemini_key_interactive
 + from .config import ensure_gemini_key_interactive, load_env
@@ -79,6 +81,7 @@ The `.env` loading was in `server.py:run_server()`, which is called **after** th
 ## Additional Complication: pipx Virtual Environment
 
 During debugging, discovered that `concordia_host` runs from a **pipx virtual environment** at:
+
 ```
 /Users/thorbthorb/.local/pipx/venvs/concordia/
 ```
@@ -102,5 +105,5 @@ The editable install (`pipx install --editable`) links the local code, but depen
 /Users/thorbthorb/.local/pipx/venvs/concordia/bin/python -c \
   "from concordia.config import load_env, env_path; load_env(); print('GEMINI_API_KEY:', os.environ.get('GEMINI_API_KEY'))"
 
-# Output: GEMINI_API_KEY: AIzaSyCGoqy76avTDPdWLXU9DzANFkGUQGcscu4
+# Output: GEMINI_API_KEY:
 ```
