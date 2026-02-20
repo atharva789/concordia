@@ -1,5 +1,6 @@
 import asyncio
 import os
+import pexpect
 import shlex
 import sys
 import tempfile
@@ -45,7 +46,7 @@ class PartyState:
 class PartyServer:
     def __init__(self, state: PartyState):
         self.state = state
-        self.start_cmd: str = """claude -p "understand the codebase" --dangerously-skip-permissions --output-format json | jq -r '.session_id'"""
+        self.start_cmd: str = """claude -p "initialize session" --dangerously-skip-permissions --output-format json | jq -r '.session_id'"""
         self.state.claude_start_cmd = self.start_cmd
         self._last_prompt_ts: Optional[float] = None
         self._lock = asyncio.Lock()
@@ -77,6 +78,18 @@ class PartyServer:
                 return
             name = msg.get("user") or "user"
             self.state.connections[name] = websocket
+            await websocket.send(
+                encode(
+                    {
+                        "type": "invite",
+                        "code": format_invite(
+                            self.state.invite.host,
+                            self.state.invite.port,
+                            self.state.invite.token,
+                        ),
+                    }
+                )
+            )
             await self._broadcast({"type": "system", "message": f"{name} joined"})
             await self._broadcast_participants()
             async for raw in websocket:
@@ -105,6 +118,11 @@ class PartyServer:
                 dead.append(name)
         for name in dead:
             self.state.connections.pop(name, None)
+        mtype = message.get("type")
+        if mtype in {"system", "error"}:
+            text = message.get("message", "")
+            if text:
+                debug_print(f"[{mtype}] {text}")
 
     async def _broadcast_participants(self) -> None:
         await self._broadcast(
@@ -160,6 +178,7 @@ class PartyServer:
             return
         await self._broadcast({"type": "system", "message": "running claude"})
         self.state.deduped_prompts.append(combined)
+        await self._broadcast({"type": "deduped_prompt", "text": combined})
         await self._write_prompt_to_claude(combined)
 
     async def _start_claude(self) -> bool:
@@ -241,9 +260,11 @@ class PartyServer:
                 if process.returncode != 0:
                     if stdout_text:
                         for line in stdout_text.splitlines():
+                            debug_print(line)
                             await self._broadcast({"type": "output", "text": line})
                     if stderr_text:
                         for line in stderr_text.splitlines():
+                            debug_print(line, file=sys.stderr)
                             await self._broadcast({"type": "output", "text": line})
                     await self._broadcast(
                         {
@@ -255,9 +276,11 @@ class PartyServer:
 
                 if stderr_text:
                     for line in stderr_text.splitlines():
+                        debug_print(line, file=sys.stderr)
                         await self._broadcast({"type": "output", "text": line})
                 if stdout_text:
                     for line in stdout_text.splitlines():
+                        debug_print(line)
                         await self._broadcast({"type": "output", "text": line})
         except Exception as exc:
             await self._broadcast({"type": "error", "message": f"Failed to send prompt: {exc}"})

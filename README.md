@@ -29,6 +29,8 @@ export NGROK_AUTHTOKEN=YOUR_NGROK_TOKEN
 concordia_host
 ```
 
+Use `--plain` if you want the legacy line-by-line terminal mode.
+
 3) Share the invite code printed in the host terminal.
 
 4) Join from another machine:
@@ -84,6 +86,7 @@ You can edit that file later if needed.
 
 - Host installs and runs `concordia_host` (prompts for `GEMINI_API_KEY` on first run).
 - Clients install and run `concordia_client` (no API key needed).
+- Both host and client default to a Codex-style full-screen TUI.
 
 ## How it works
 
@@ -104,6 +107,7 @@ concordia_client concordia://<ngrok-host>:<ngrok-port>/abc123 --user bob
 
 - ngrok is required for hosting; invite host/port are always derived from the ngrok tunnel.
 - `--project-dir` controls the working directory used for Claude session start/resume commands.
+- `--plain` forces the legacy non-TUI client UI.
 - Set `--no-local-repl` to run a server without the creator's local REPL.
 - Claude execution uses session start + `--resume` internally; `--claude-command` is currently not used by runtime execution.
 - `--public-host` and `--ngrok` flags are deprecated and ignored.

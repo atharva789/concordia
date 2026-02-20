@@ -1,0 +1,44 @@
+Screen {
+  background: #0b0f14;
+  color: #d1d5db;
+}
+
+#app_title {
+  height: 1;
+  padding: 0 1;
+  background: #0f141b;
+  color: #9ca3af;
+}
+
+#layout {
+  height: 1fr;
+}
+
+#timeline {
+  background: #0b0f14;
+  padding: 0 1 0 1;
+}
+
+#sidebar {
+  width: 30;
+  background: #0d1218;
+  border-left: solid #1f2937;
+  padding: 1;
+  color: #a3aab8;
+}
+
+#participants {
+  color: #cbd5e1;
+}
+
+#status {
+  color: #94a3b8;
+  margin-top: 1;
+}
+
+#input {
+  height: 3;
+  border-top: solid #1f2937;
+  background: #0f141b;
+  color: #e5e7eb;
+}

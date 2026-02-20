@@ -12,6 +12,7 @@ dependencies = [
   "python-dotenv>=1.0.0",
   "requests>=2.31.0",
   "pyngrok>=7.0.0",
+  "prompt_toolkit>=3.0.0",
 ]
 
 [project.scripts]
@@ -22,3 +23,6 @@ concordia_client = "concordia.client_cli:main"
 [build-system]
 requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools.package-data]
+"concordia.ui" = ["*.tcss"]
