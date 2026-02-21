@@ -6,14 +6,14 @@ from pathlib import Path
 from pyngrok import ngrok
 
 from .client import run_client
-from .config import ensure_gemini_key_interactive, load_env
+from .config import load_env
 from .debug import debug_print
 from .server import run_server
 from .utils import default_username, generate_token, parse_invite
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="concordia", description="Multi-user Claude Code prompt party")
+    p = argparse.ArgumentParser(prog="concordia", description="Multi-user shared Claude terminal")
     g = p.add_mutually_exclusive_group(required=True)
     g.add_argument("--create-party", action="store_true", help="Create a new party")
     g.add_argument("--join", metavar="INVITE_CODE", help="Join a party with invite code")
@@ -23,9 +23,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--host", default="0.0.0.0", help="Host to bind (create-party)")
     p.add_argument("--port", type=int, default=8765, help="Port to bind (create-party)")
     p.add_argument("--public-host", default=None, help="Deprecated: ignored. Host is derived from ngrok tunnel.")
-    p.add_argument("--claude-command", default="cat {prompt_file} | claude")
-    p.add_argument("--dedupe-window", type=float, default=3.0, help="Seconds to wait before dedupe")
-    p.add_argument("--min-prompts", type=int, default=1, help="Minimum prompts before run")
+    p.add_argument("--claude-command", default="claude --dangerously-skip-permissions")
     p.add_argument("--project-dir", default=str(Path.cwd()), help="Project directory Claude should operate in")
     p.add_argument("--plain", action="store_true", help="Use legacy non-TUI client mode")
     p.add_argument("--no-local-repl", action="store_true", help="Disable local REPL for creator")
@@ -40,9 +38,6 @@ def _ws_uri(host: str, port: int) -> str:
 
 async def _run_create_party(args: argparse.Namespace) -> None:
     load_env()
-    key = ensure_gemini_key_interactive()
-    if not key:
-        raise SystemExit("Missing GEMINI_API_KEY")
 
     authtoken = os.environ.get("NGROK_AUTHTOKEN", "").strip()
     if not authtoken:
@@ -70,8 +65,6 @@ async def _run_create_party(args: argparse.Namespace) -> None:
                 invite_port=public_port,
                 project_dir=os.path.expanduser(args.project_dir),
                 claude_command=args.claude_command,
-                dedupe_window=args.dedupe_window,
-                min_prompts=args.min_prompts,
                 token=token,
             )
         finally:

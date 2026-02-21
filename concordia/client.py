@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import subprocess
 import sys
 from typing import AsyncIterator, Dict, Optional
@@ -28,10 +29,11 @@ class ClientTransport:
             await self._websocket.close()
             self._websocket = None
 
-    async def send_prompt(self, text: str) -> None:
+    async def send_input_bytes(self, raw: bytes) -> None:
         if not self._websocket:
             raise RuntimeError("WebSocket is not connected")
-        await self._websocket.send(encode({"type": "prompt", "text": text}))
+        payload = base64.b64encode(raw).decode("ascii")
+        await self._websocket.send(encode({"type": "input_bytes", "data_b64": payload}))
 
     @property
     def is_connected(self) -> bool:
@@ -67,8 +69,20 @@ async def run_client_plain(uri: str, token: str, user: str) -> None:
     async def receiver() -> None:
         async for msg in transport.iter_messages():
             mtype = msg.get("type")
-            if mtype == "output":
-                print(msg.get("text", ""))
+            if mtype == "output_bytes":
+                data_b64 = msg.get("data_b64", "")
+                stream = msg.get("stream", "stdout")
+                try:
+                    raw = base64.b64decode(data_b64)
+                except Exception:
+                    continue
+                text = raw.decode("utf-8", errors="replace")
+                if stream == "stderr":
+                    sys.stderr.write(text)
+                    sys.stderr.flush()
+                else:
+                    sys.stdout.write(text)
+                    sys.stdout.flush()
             elif mtype == "system":
                 print(f"[system] {msg.get('message', '')}")
             elif mtype == "participants":
@@ -77,23 +91,21 @@ async def run_client_plain(uri: str, token: str, user: str) -> None:
                 print(f"[party] main={main_user} users={users}")
             elif mtype == "error":
                 print(f"[error] {msg.get('message', '')}")
-            elif mtype == "deduped_prompt":
-                print("[deduped]")
-                print(msg.get("text", ""))
             elif mtype == "invite":
                 print(f"[invite] {msg.get('code', '')}")
             else:
                 print(f"[info] {msg}")
 
     async def sender() -> None:
-        print("type a prompt and press enter.")
+        print("type and press enter (plain mode sends one line at a time).")
         print("special commands: /quit (exit) | /shell <cmd> (run shell command)")
         while True:
             text = await _read_input("> ")
             if text is None:
                 continue
-            text = text.strip()
-            if not text:
+            raw_text = text
+            text = (text or "").strip()
+            if not raw_text:
                 continue
             if text in ("/quit", "/exit"):
                 await transport.close()
@@ -103,7 +115,7 @@ async def run_client_plain(uri: str, token: str, user: str) -> None:
                 if shell_output:
                     print(shell_output)
                 continue
-            await transport.send_prompt(text)
+            await transport.send_input_bytes((raw_text + "\n").encode("utf-8", errors="replace"))
 
     try:
         await asyncio.gather(receiver(), sender())
