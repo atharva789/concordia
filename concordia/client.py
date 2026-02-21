@@ -21,7 +21,7 @@ class ClientTransport:
         self._websocket: Optional[websockets.WebSocketClientProtocol] = None
 
     async def connect(self) -> None:
-        self._websocket = await websockets.connect(self.uri)
+        self._websocket = await websockets.connect(self.uri, compression=None, max_queue=256)
         await self._websocket.send(encode({"type": "hello", "user": self.user, "token": self.token}))
 
     async def close(self) -> None:
@@ -32,8 +32,7 @@ class ClientTransport:
     async def send_input_bytes(self, raw: bytes) -> None:
         if not self._websocket:
             raise RuntimeError("WebSocket is not connected")
-        payload = base64.b64encode(raw).decode("ascii")
-        await self._websocket.send(encode({"type": "input_bytes", "data_b64": payload}))
+        await self._websocket.send(raw)
 
     @property
     def is_connected(self) -> bool:
@@ -43,7 +42,10 @@ class ClientTransport:
         if not self._websocket:
             raise RuntimeError("WebSocket is not connected")
         async for raw in self._websocket:
-            yield decode(raw)
+            if isinstance(raw, (bytes, bytearray)):
+                yield {"type": "output_raw", "data": bytes(raw)}
+            else:
+                yield decode(raw)
 
 
 async def _run_shell_command(cmd: str) -> str:
@@ -69,7 +71,12 @@ async def run_client_plain(uri: str, token: str, user: str) -> None:
     async def receiver() -> None:
         async for msg in transport.iter_messages():
             mtype = msg.get("type")
-            if mtype == "output_bytes":
+            if mtype == "output_raw":
+                raw = msg.get("data", b"")
+                if raw:
+                    sys.stdout.buffer.write(raw)
+                    sys.stdout.buffer.flush()
+            elif mtype == "output_bytes":
                 data_b64 = msg.get("data_b64", "")
                 stream = msg.get("stream", "stdout")
                 try:

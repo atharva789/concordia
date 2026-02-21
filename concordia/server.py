@@ -50,7 +50,7 @@ class PartyServer:
             idx += 1
 
     async def start(self, host: str, port: int) -> None:
-        async with websockets.serve(self._handler, host, port):
+        async with websockets.serve(self._handler, host, port, compression=None, max_queue=256):
             debug_print("party created")
             debug_print(
                 f"invite code: {format_invite(self.state.invite.host, self.state.invite.port, self.state.invite.token)}"
@@ -108,6 +108,9 @@ class PartyServer:
             await self._broadcast_participants()
 
             async for raw in websocket:
+                if isinstance(raw, (bytes, bytearray)):
+                    await self._write_input_bytes(bytes(raw))
+                    continue
                 msg = decode(raw)
                 mtype = msg.get("type")
                 if mtype == "input_bytes":
@@ -132,20 +135,32 @@ class PartyServer:
         if not self.state.connections:
             return
         raw = encode(message)
-        dead = []
-        for name, ws in self.state.connections.items():
-            try:
-                await ws.send(raw)
-            except websockets.ConnectionClosed:
-                dead.append(name)
-        for name in dead:
-            self.state.connections.pop(name, None)
+        items = list(self.state.connections.items())
+        results = await asyncio.gather(
+            *(ws.send(raw) for _, ws in items),
+            return_exceptions=True,
+        )
+        for (name, _), res in zip(items, results):
+            if isinstance(res, websockets.ConnectionClosed):
+                self.state.connections.pop(name, None)
 
         mtype = message.get("type")
         if mtype in {"system", "error"}:
             text = message.get("message", "")
             if text:
                 debug_print(f"[{mtype}] {text}")
+
+    async def _broadcast_raw(self, chunk: bytes) -> None:
+        if not self.state.connections or not chunk:
+            return
+        items = list(self.state.connections.items())
+        results = await asyncio.gather(
+            *(ws.send(chunk) for _, ws in items),
+            return_exceptions=True,
+        )
+        for (name, _), res in zip(items, results):
+            if isinstance(res, websockets.ConnectionClosed):
+                self.state.connections.pop(name, None)
 
     async def _broadcast_participants(self) -> None:
         await self._broadcast(
@@ -199,12 +214,6 @@ class PartyServer:
         except Exception as exc:
             await self._broadcast({"type": "error", "message": f"Failed to write to Claude PTY: {exc}"})
 
-    async def _broadcast_output_bytes(self, chunk: bytes, stream: str) -> None:
-        if not chunk:
-            return
-        payload = base64.b64encode(chunk).decode("ascii")
-        await self._broadcast({"type": "output_bytes", "stream": stream, "data_b64": payload})
-
     async def _read_claude_and_broadcast(self) -> None:
         loop = asyncio.get_running_loop()
         while True:
@@ -216,7 +225,7 @@ class PartyServer:
                 return
             if not data:
                 return
-            await self._broadcast_output_bytes(data, "stdout")
+            await self._broadcast_raw(data)
 
     async def shutdown(self) -> None:
         if self._claude_reader_task:

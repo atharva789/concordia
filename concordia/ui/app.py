@@ -14,6 +14,15 @@ def _stderr_line(text: str) -> None:
     sys.stderr.flush()
 
 
+def _render_intro() -> None:
+    sys.stdout.write("\x1b[2J\x1b[H")
+    sys.stdout.write("Concordia\n")
+    sys.stdout.write("=========\n")
+    sys.stdout.write("Shared Claude terminal\n")
+    sys.stdout.write("Ctrl-] to disconnect local client\n\n")
+    sys.stdout.flush()
+
+
 async def run_tui(transport: ClientTransport) -> None:
     """Shared terminal mode: stream stdin bytes to host and render host PTY bytes locally.
 
@@ -28,13 +37,19 @@ async def run_tui(transport: ClientTransport) -> None:
     invite_code = ""
     main_user = ""
     users: List[str] = []
+    printed_invite = False
+    printed_party = False
 
     async def _receiver() -> None:
-        nonlocal connected, invite_code, main_user, users
+        nonlocal connected, invite_code, main_user, users, printed_invite, printed_party
         out_fd = sys.stdout.fileno()
         async for msg in transport.iter_messages():
             mtype = msg.get("type")
-            if mtype == "output_bytes":
+            if mtype == "output_raw":
+                raw = msg.get("data", b"")
+                if raw:
+                    os.write(out_fd, raw)
+            elif mtype == "output_bytes":
                 data_b64 = msg.get("data_b64", "")
                 try:
                     raw = base64.b64decode(data_b64)
@@ -44,13 +59,18 @@ async def run_tui(transport: ClientTransport) -> None:
                     os.write(out_fd, raw)
             elif mtype == "invite":
                 invite_code = msg.get("code", "")
-                _stderr_line(f"[invite] {invite_code}")
+                if invite_code and not printed_invite:
+                    _stderr_line(f"[invite] {invite_code}")
+                    printed_invite = True
             elif mtype == "participants":
                 main_user = msg.get("main_user", "")
                 users = list(msg.get("users", []))
-                _stderr_line(f"[party] host={main_user} users={', '.join(users)}")
+                if users and not printed_party:
+                    _stderr_line(f"[party] host={main_user} users={', '.join(users)}")
+                    printed_party = True
             elif mtype == "system":
-                _stderr_line(f"[system] {msg.get('message', '')}")
+                # Ignore routine system chatter to keep terminal rendering clean.
+                pass
             elif mtype == "error":
                 _stderr_line(f"[error] {msg.get('message', '')}")
 
@@ -63,7 +83,6 @@ async def run_tui(transport: ClientTransport) -> None:
         loop = asyncio.get_running_loop()
         try:
             tty.setraw(fd)
-            _stderr_line("[system] shared terminal mode active (Ctrl-] to disconnect local client)")
             while connected:
                 chunk = await loop.run_in_executor(None, os.read, fd, 1024)
                 if not chunk:
@@ -74,6 +93,7 @@ async def run_tui(transport: ClientTransport) -> None:
         finally:
             termios.tcsetattr(fd, termios.TCSADRAIN, old_attrs)
 
+    _render_intro()
     await transport.connect()
     connected = True
     _stderr_line("[system] connected")
