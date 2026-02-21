@@ -38,6 +38,17 @@ class PartyServer:
         self._write_lock = asyncio.Lock()
         self._claude_reader_task: Optional[asyncio.Task] = None
 
+    def _reserve_connection_name(self, requested: str) -> str:
+        base = (requested or "user").strip() or "user"
+        if base not in self.state.connections:
+            return base
+        idx = 2
+        while True:
+            candidate = f"{base}-{idx}"
+            if candidate not in self.state.connections:
+                return candidate
+            idx += 1
+
     async def start(self, host: str, port: int) -> None:
         async with websockets.serve(self._handler, host, port):
             debug_print("party created")
@@ -68,8 +79,18 @@ class PartyServer:
                 await websocket.send(encode({"type": "error", "message": "invalid invite"}))
                 return
 
-            name = msg.get("user") or "user"
+            requested_name = msg.get("user") or "user"
+            name = self._reserve_connection_name(requested_name)
             self.state.connections[name] = websocket
+            if name != requested_name:
+                await websocket.send(
+                    encode(
+                        {
+                            "type": "system",
+                            "message": f"name '{requested_name}' already in use; joined as '{name}'",
+                        }
+                    )
+                )
 
             await websocket.send(
                 encode(
