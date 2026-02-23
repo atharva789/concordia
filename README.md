@@ -1,67 +1,86 @@
 # Concordia
 
-Concordia is a multi-user shared terminal for Claude Code. Users join with an invite code and collaborate in real time against the host's Claude PTY session. The host runs Claude locally; Concordia streams terminal input/output to connected participants.
+Concordia is a live, multi-user terminal sharing tool for interactive TUI apps.
+
+Think of it like Google Docs for terminal sessions: one host runs a program, other users join with an invite link, and everyone sees the same live screen and can collaborate in real time.
+
+## Why Concordia instead of tmux/ssh
+
+- Internet-first collaboration with invite codes (no manual SSH account setup per guest).
+- One host-managed runtime for quick pair/mob sessions.
+- Shared live view for all participants, including the host's own terminal stream.
+- Better for ad-hoc collaborative sessions than managing remote shell access and key distribution.
+
+Use `tmux`/`ssh` when you want full server administration and long-lived personal shells. Use Concordia when you want fast collaborative live sessions.
 
 ## Quickstart
 
-1) Run the smart installation script:
+1. Install:
 
 ```bash
 bash install.sh
 ```
 
-This will:
-- Detect your Python installation
-- Find and use `pipx` (or fall back to `pip`)
-- Install the concordia package
-- Check for Claude Code CLI
-
-Before hosting, set your ngrok auth token (required):
+2. Set ngrok auth token on the host (required):
 
 ```bash
 export NGROK_AUTHTOKEN=YOUR_NGROK_TOKEN
 ```
 
-2) On the host (creator/main user), start a party:
+3. Start a party and choose the shared program:
 
 ```bash
-concordia_host
+concordia_host --program "bash"
 ```
 
-Use `--plain` if you want the legacy line-by-line terminal mode.
+4. Share the invite code printed by host.
 
-Strict compliance mode is enabled by default. If your usage is permitted, attest explicitly:
+5. Join from another machine:
 
 ```bash
-concordia_host --attest-commercial-use-rights
+concordia_client <paste-invite-code> --user alice
 ```
 
-3) Share the invite code printed in the host terminal.
+## What can be shared
 
-4) Join from another machine:
+Any interactive terminal program that runs on the host, for example:
+
+- `bash`, `zsh`, `fish`
+- `python3 -q`, `ipython`
+- `htop`, `btop`
+- `vim`, `nvim`
+- `lazygit`
+- custom internal TUIs
+
+## Common commands
 
 ```bash
-concordia_client <paste-invite-from-host-terminal> --user alice
+# Share a shell
+concordia_host --program "bash"
+
+# Share a Python REPL in a specific project
+concordia_host --project-dir ~/my-project --program "python3 -q"
+
+# Share a TUI app
+concordia_host --program "lazygit"
+
+# Join
+concordia_client concordia://<ngrok-host>:<ngrok-port>/<token> --user bob
 ```
 
-## Installation Troubleshooting
+## How it works
 
-**"pipx not found"**
-- Install pipx: `brew install pipx` (macOS) or `pip3 install --user pipx`
-- Or let the script use pip instead
-
-**"Claude CLI not found"**
-- Install Claude Code: https://claude.com/claude-code
-
-**"Python 3.9+ required"**
-- Check version: `python3 --version`
-- Update Python if needed
+- Host starts a websocket server and launches the chosen program inside a PTY.
+- Clients connect with invite token.
+- Client input bytes are forwarded to host PTY stdin.
+- PTY output bytes are broadcast to all connected clients.
+- Control messages (`invite`, `participants`, `system`, `error`) are sent as JSON.
 
 ## Requirements
 
-- Python 3.9+ on all machines
-- Claude Code CLI on the party creator's machine (`claude` on PATH)
-- ngrok auth token on the host (`NGROK_AUTHTOKEN`)
+- Python 3.9+ on host and clients
+- ngrok auth token on host (`NGROK_AUTHTOKEN`)
+- The shared program installed on host and available on `PATH`
 
 ## Install (global)
 
@@ -69,83 +88,42 @@ concordia_client <paste-invite-from-host-terminal> --user alice
 pipx install .
 ```
 
-If you don't use `pipx`:
+If you do not use `pipx`:
 
 ```bash
 python3 -m pip install --user .
 ```
 
-For a fully bundled, standalone install, see “Bundled install (standalone)” below.
+## Host and client apps
 
-## Setup
-
-Host setup: ensure Claude CLI is authenticated on the host machine and `NGROK_AUTHTOKEN` is set.
-
-## Host vs client installs
-
-- Host installs and runs `concordia_host`.
-- Clients install and run `concordia_client` (no API key needed).
-- Both host and client default to a Codex-style full-screen TUI.
-
-## How it works
-
-- The creator runs the server and is the main user; all Claude Code commands are executed locally by the creator.
-- On startup, Concordia launches Claude in an interactive PTY in the configured project directory.
-- Participants connect over websocket and receive streamed PTY output in real time.
-- Input bytes are forwarded to the host PTY according to compliance policy.
-- Claude output is broadcast to every participant terminal.
-
-## Options
-
-```bash
-concordia_host --port 9000 --project-dir ~/my-project --attest-commercial-use-rights
-concordia_host --compliance-mode strict --allow-remote-input --attest-commercial-use-rights
-concordia_host --compliance-mode strict --attest-commercial-use-rights --require-client-claude-check
-concordia_host --estimate-token-usage --usage-estimate-window-sec 8 --usage-estimate-path ./concordia-usage-estimate.json --attest-commercial-use-rights
-concordia_client concordia://<ngrok-host>:<ngrok-port>/abc123 --user bob
-```
-
-## Compliance and safety
-
-- `--compliance-mode` controls startup policy (`strict`, `warn`, `off`; default `strict`).
-- `--attest-commercial-use-rights` is required in strict mode.
-- Remote input is disabled by default in strict mode unless `--allow-remote-input` is set.
-- `--require-client-claude-check` requires non-host clients to provide a fresh local Claude probe result.
-- Clients run local probe by default; use `--skip-claude-subscription-check` to bypass (host may reject if probe is required).
-- `--estimate-token-usage` writes an approximate per-client usage attribution report (`--usage-estimate-path`).
-- Usage attribution is estimate-only in shared PTY mode (active writer window + input ownership), not exact token accounting.
-- Append-only audit logging is enabled by default (`--audit-log-path`, default `./concordia-audit.log`).
-- See `COMPLIANCE_CHECKLIST.md` for release and operational guidance.
+- Host command: `concordia_host`
+- Client command: `concordia_client`
+- Use `--plain` for legacy non-TUI mode.
 
 ## Notes
 
-- ngrok is required for hosting; invite host/port are always derived from the ngrok tunnel.
-- `--project-dir` controls the working directory used for the host Claude process.
-- `--plain` forces the legacy non-TUI client UI.
-- Set `--no-local-repl` to run a server without the creator's local REPL.
-- `--claude-command` controls the Claude startup command for the host PTY.
-- `--public-host` and `--ngrok` flags are deprecated and ignored.
+- `--program` is required when creating a party.
+- `--project-dir` sets the working directory for the shared program process.
+- `--no-local-repl` runs server without auto-connecting host client.
+- ngrok is required for hosting; invite host/port come from the ngrok tunnel.
+- `--public-host` and `--ngrok` are deprecated and ignored.
 
 ## Docker
 
-Build and run a party container (creator/main user):
-
 ```bash
 docker build -t concordia .
-docker run --rm -it \\
-  -p 8765:8765 \\
-  --env NGROK_AUTHTOKEN=YOUR_NGROK_TOKEN \\
-  concordia \\
-  concordia --create-party --host 0.0.0.0 --attest-commercial-use-rights
+docker run --rm -it \
+  -p 8765:8765 \
+  --env NGROK_AUTHTOKEN=YOUR_NGROK_TOKEN \
+  concordia \
+  concordia --create-party --host 0.0.0.0 --program "bash"
 ```
 
-Or with docker-compose (uses `.env`):
+Or:
 
 ```bash
 docker compose up --build
 ```
-
-Set `NGROK_AUTHTOKEN` in `.env`.
 
 Join from another machine:
 
@@ -153,32 +131,17 @@ Join from another machine:
 concordia_client concordia://<ngrok-host>:<ngrok-port>/TOKEN --user alice
 ```
 
-Notes:
-- The container runs the server; Claude Code must be available inside the container if you want execution there.
-- If you want Claude Code to run on the host instead, run the server on the host and skip Docker.
-
 ## Bundled install (standalone)
-
-To create a self-contained `concordia.pyz` that bundles dependencies:
 
 ```bash
 ./scripts/build_bundle.sh
+./dist/concordia.pyz --create-party --program "bash"
 ```
 
-Run it directly:
-
-```bash
-./dist/concordia.pyz --create-party
-```
-
-## GitHub releases
-
-To publish downloadable packages (wheel, sdist, standalone .pyz):
+## Releases
 
 ```bash
 ./scripts/build_release.sh
 ```
 
-Upload the files in `dist/` to a GitHub Release.
-
-Or push a tag like `v0.1.0` and the GitHub Actions workflow will build and upload assets automatically.
+Upload artifacts in `dist/` to GitHub Releases.
