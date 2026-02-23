@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import os
+import shutil
 import sys
 import termios
 import tty
@@ -8,18 +9,57 @@ from typing import List
 
 from ..client import ClientTransport
 
+RESET = "\033[0m"
+BOLD = "\033[1m"
+DIM = "\033[2m"
+FG_TITLE = "\033[38;5;81m"
+FG_TEXT = "\033[38;5;252m"
+FG_DIM = "\033[38;5;245m"
+FG_OK = "\033[38;5;114m"
+FG_WARN = "\033[38;5;221m"
+FG_ERR = "\033[38;5;203m"
+
 
 def _stderr_line(text: str) -> None:
     sys.stderr.write(text + "\n")
     sys.stderr.flush()
 
 
+def _meta_line(kind: str, text: str) -> None:
+    if kind == "system":
+        color = FG_OK
+    elif kind == "invite":
+        color = FG_WARN
+    elif kind == "party":
+        color = FG_DIM
+    elif kind == "error":
+        color = FG_ERR
+    else:
+        color = FG_TEXT
+    _stderr_line(f"{DIM}[{kind}]{RESET} {color}{text}{RESET}")
+
+
 def _render_intro() -> None:
+    cols = max(60, min(shutil.get_terminal_size((100, 30)).columns, 120))
+    inner = cols - 4
+
+    def row(text: str = "") -> str:
+        trimmed = text[:inner]
+        return f"| {trimmed.ljust(inner)} |"
+
+    top = "+" + "-" * (cols - 2) + "+"
     sys.stdout.write("\x1b[2J\x1b[H")
-    sys.stdout.write("Concordia\n")
-    sys.stdout.write("=========\n")
-    sys.stdout.write("Shared Claude terminal\n")
-    sys.stdout.write("Ctrl-] to disconnect local client\n\n")
+    sys.stdout.write(f"{FG_DIM}{top}{RESET}\n")
+    sys.stdout.write(f"{FG_DIM}{row()} {RESET}\n")
+    sys.stdout.write(f"{FG_DIM}| {FG_TITLE}{BOLD}{'CONCORDIA'.ljust(inner)}{RESET}{FG_DIM} |\n")
+    sys.stdout.write(f"{FG_DIM}{row('Shared Claude terminal')}{RESET}\n")
+    sys.stdout.write(f"{FG_DIM}{row()}{RESET}\n")
+    sys.stdout.write(f"{FG_DIM}{row('Controls: Ctrl-] disconnects local client')}{RESET}\n")
+    sys.stdout.write(f"{FG_DIM}{row('Waiting for session bootstrap...')}{RESET}\n")
+    sys.stdout.write(f"{FG_DIM}{row()}{RESET}\n")
+    sys.stdout.write(f"{FG_DIM}{top}{RESET}\n\n")
+    sys.stdout.write(f"{FG_TEXT}Startup log{RESET}\n")
+    sys.stdout.write(f"{FG_DIM}{'-' * 22}{RESET}\n")
     sys.stdout.flush()
 
 
@@ -60,19 +100,19 @@ async def run_tui(transport: ClientTransport) -> None:
             elif mtype == "invite":
                 invite_code = msg.get("code", "")
                 if invite_code and not printed_invite:
-                    _stderr_line(f"[invite] {invite_code}")
+                    _meta_line("invite", invite_code)
                     printed_invite = True
             elif mtype == "participants":
                 main_user = msg.get("main_user", "")
                 users = list(msg.get("users", []))
                 if users and not printed_party:
-                    _stderr_line(f"[party] host={main_user} users={', '.join(users)}")
+                    _meta_line("party", f"host={main_user} users={', '.join(users)}")
                     printed_party = True
             elif mtype == "system":
                 # Ignore routine system chatter to keep terminal rendering clean.
                 pass
             elif mtype == "error":
-                _stderr_line(f"[error] {msg.get('message', '')}")
+                _meta_line("error", msg.get("message", ""))
 
         connected = False
 
@@ -96,7 +136,7 @@ async def run_tui(transport: ClientTransport) -> None:
     _render_intro()
     await transport.connect()
     connected = True
-    _stderr_line("[system] connected")
+    _meta_line("system", "connected")
 
     recv_task = asyncio.create_task(_receiver())
     send_task = asyncio.create_task(_sender_raw())
