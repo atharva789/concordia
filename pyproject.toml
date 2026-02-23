@@ -5,7 +5,7 @@ description = "Multi-user prompt party with dedupe and Claude Code execution"
 readme = "README.md"
 requires-python = ">=3.9"
 authors = [{name = "Concordia Contributors"}]
-license = {text = "MIT"}
+license = {text = "Proprietary"}
 
 dependencies = [
   "websockets>=12.0",
