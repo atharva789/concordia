@@ -15,7 +15,7 @@ from .utils import default_username, generate_token, parse_invite
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="concordia", description="Multi-user shared Claude terminal")
+    p = argparse.ArgumentParser(prog="concordia", description="Multi-user shared terminal")
     g = p.add_mutually_exclusive_group(required=True)
     g.add_argument("--create-party", action="store_true", help="Create a new party")
     g.add_argument("--join", metavar="INVITE_CODE", help="Join a party with invite code")
@@ -25,8 +25,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--host", default="0.0.0.0", help="Host to bind (create-party)")
     p.add_argument("--port", type=int, default=8765, help="Port to bind (create-party)")
     p.add_argument("--public-host", default=None, help="Deprecated: ignored. Host is derived from ngrok tunnel.")
-    p.add_argument("--claude-command", default="claude --dangerously-skip-permissions")
-    p.add_argument("--project-dir", default=str(Path.cwd()), help="Project directory Claude should operate in")
+    p.add_argument(
+        "--program",
+        default=None,
+        help="Program/command to run in the shared PTY (create-party), e.g. \"claude --dangerously-skip-permissions\"",
+    )
+    p.add_argument("--project-dir", default=str(Path.cwd()), help="Project directory the shared program should operate in")
     p.add_argument("--plain", action="store_true", help="Use legacy non-TUI client mode")
     p.add_argument("--no-local-repl", action="store_true", help="Disable local REPL for creator")
     p.add_argument("--ngrok", action="store_true", help="Deprecated: ngrok is always enabled for party creation.")

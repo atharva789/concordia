@@ -24,7 +24,7 @@ from .utils import Invite, format_invite, generate_token
 class PartyState:
     invite: Invite
     creator: str
-    claude_command: str
+    program_command: str
     project_dir: str
     claude_start_cmd: str = ""
     claude_master_fd: int = -1
@@ -49,7 +49,7 @@ class PartyServer:
 
     def __init__(self, state: PartyState):
         self.state = state
-        self.start_cmd: str = state.claude_command or "claude --dangerously-skip-permissions"
+        self.start_cmd: str = (state.program_command or "").strip() or "claude --dangerously-skip-permissions"
         self.state.claude_start_cmd = self.start_cmd
         self._write_lock = asyncio.Lock()
         self._claude_reader_task: Optional[asyncio.Task] = None
@@ -268,8 +268,8 @@ class PartyServer:
                 f"invite code: {format_invite(self.state.invite.host, self.state.invite.port, self.state.invite.token)}"
             )
             try:
-                if not await self._start_claude():
-                    debug_print("[CMD] Failed to run claude")
+                if not await self._start_program():
+                    debug_print("[CMD] Failed to run program")
                     return
                 await self._broadcast(
                     {
@@ -282,10 +282,10 @@ class PartyServer:
                     }
                 )
                 if not self.state.claude_process:
-                    await self._broadcast({"type": "error", "message": "Claude process missing"})
+                    await self._broadcast({"type": "error", "message": "Program process missing"})
                     return
                 await self.state.claude_process.wait()
-                await self._broadcast({"type": "system", "message": "claude process exited"})
+                await self._broadcast({"type": "system", "message": "program process exited"})
             finally:
                 await self.shutdown()
 
@@ -432,7 +432,7 @@ class PartyServer:
             }
         )
 
-    async def _start_claude(self) -> bool:
+    async def _start_program(self) -> bool:
         self.state.env = os.environ.copy()
         self.state.env.pop("ANTROPIC_API_KEY", None)
         self.state.env.pop("ANTHROPIC_API_KEY", None)
@@ -469,24 +469,24 @@ class PartyServer:
             self.state.claude_stderr = process.stderr
 
             self._claude_reader_task = asyncio.create_task(self._read_claude_and_broadcast())
-            await self._broadcast({"type": "system", "message": "claude started (interactive mode)"})
+            await self._broadcast({"type": "system", "message": "program started (interactive mode)"})
             return True
         except Exception as exc:
-            debug_print(f"[ERROR] failed to start claude: {exc}", file=sys.stderr)
-            await self._broadcast({"type": "error", "message": f"failed to start claude: {exc}"})
+            debug_print(f"[ERROR] failed to start program: {exc}", file=sys.stderr)
+            await self._broadcast({"type": "error", "message": f"failed to start program: {exc}"})
             return False
 
     async def _write_input_bytes(self, chunk: bytes) -> None:
         if not chunk:
             return
         if self.state.claude_master_fd < 0:
-            await self._broadcast({"type": "error", "message": "Claude PTY not initialized"})
+            await self._broadcast({"type": "error", "message": "Program PTY not initialized"})
             return
         try:
             async with self._write_lock:
                 os.write(self.state.claude_master_fd, chunk)
         except Exception as exc:
-            await self._broadcast({"type": "error", "message": f"Failed to write to Claude PTY: {exc}"})
+            await self._broadcast({"type": "error", "message": f"Failed to write to program PTY: {exc}"})
 
     async def _read_claude_and_broadcast(self) -> None:
         loop = asyncio.get_running_loop()
@@ -549,7 +549,7 @@ def create_party_state(
     return PartyState(
         invite=invite,
         creator=creator,
-        claude_command=claude_command,
+        program_command=program_command,
         project_dir=project_dir,
         compliance_mode=compliance_mode,
         allow_remote_input=allow_remote_input,
