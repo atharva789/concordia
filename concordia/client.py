@@ -1,9 +1,7 @@
 import asyncio
 import base64
-import hashlib
 import subprocess
 import sys
-import time
 from typing import AsyncIterator, Dict, Optional
 
 import websockets
@@ -16,18 +14,15 @@ async def _read_input(prompt: str) -> Optional[str]:
 
 
 class ClientTransport:
-    def __init__(self, uri: str, token: str, user: str, client_verification: Optional[Dict] = None):
+    def __init__(self, uri: str, token: str, user: str):
         self.uri = uri
         self.token = token
         self.user = user
-        self.client_verification = client_verification
         self._websocket: Optional[websockets.WebSocketClientProtocol] = None
 
     async def connect(self) -> None:
         self._websocket = await websockets.connect(self.uri, compression=None, max_queue=256)
         hello = {"type": "hello", "user": self.user, "token": self.token}
-        if self.client_verification is not None:
-            hello["client_verification"] = self.client_verification
         await self._websocket.send(encode(hello))
 
     async def close(self) -> None:
@@ -70,52 +65,8 @@ async def _run_shell_command(cmd: str) -> str:
     return await asyncio.to_thread(_exec)
 
 
-async def run_client_verification_probe(command: str, timeout_sec: float) -> Dict:
-    started = time.time()
-    try:
-        process = await asyncio.create_subprocess_shell(
-            command,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        try:
-            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout_sec)
-        except asyncio.TimeoutError:
-            process.kill()
-            await process.wait()
-            return {
-                "method": "local_claude_probe_v1",
-                "ok": False,
-                "checked_at": time.time(),
-                "duration_ms": int((time.time() - started) * 1000),
-                "command": command,
-                "error": "timeout",
-            }
-        out = stdout or b""
-        err = stderr or b""
-        return {
-            "method": "local_claude_probe_v1",
-            "ok": process.returncode == 0,
-            "checked_at": time.time(),
-            "duration_ms": int((time.time() - started) * 1000),
-            "command": command,
-            "returncode": process.returncode,
-            "stdout_sha256": hashlib.sha256(out).hexdigest() if out else "",
-            "stderr_sha256": hashlib.sha256(err).hexdigest() if err else "",
-        }
-    except Exception as exc:
-        return {
-            "method": "local_claude_probe_v1",
-            "ok": False,
-            "checked_at": time.time(),
-            "duration_ms": int((time.time() - started) * 1000),
-            "command": command,
-            "error": str(exc),
-        }
-
-
-async def run_client_plain(uri: str, token: str, user: str, client_verification: Optional[Dict] = None) -> None:
-    transport = ClientTransport(uri=uri, token=token, user=user, client_verification=client_verification)
+async def run_client_plain(uri: str, token: str, user: str) -> None:
+    transport = ClientTransport(uri=uri, token=token, user=user)
     await transport.connect()
 
     async def receiver() -> None:
@@ -180,10 +131,10 @@ async def run_client_plain(uri: str, token: str, user: str, client_verification:
         await transport.close()
 
 
-async def run_client_tui(uri: str, token: str, user: str, client_verification: Optional[Dict] = None) -> None:
+async def run_client_tui(uri: str, token: str, user: str) -> None:
     from .ui.app import run_tui
 
-    await run_tui(transport=ClientTransport(uri=uri, token=token, user=user, client_verification=client_verification))
+    await run_tui(transport=ClientTransport(uri=uri, token=token, user=user))
 
 
 async def run_client(
@@ -191,24 +142,12 @@ async def run_client(
     token: str,
     user: str,
     plain: bool = False,
-    verify_claude_subscription: bool = False,
-    claude_check_command: str = "claude -p 'Reply exactly: CONCORDIA_SUB_OK' --dangerously-skip-permissions",
-    claude_check_timeout: float = 20.0,
-    require_probe_success: bool = False,
 ) -> None:
-    verification: Optional[Dict] = None
-    if verify_claude_subscription:
-        verification = await run_client_verification_probe(claude_check_command, claude_check_timeout)
-        if require_probe_success and not verification.get("ok", False):
-            raise RuntimeError(
-                f"Claude subscription verification failed for this client: {verification.get('error') or verification.get('returncode')}"
-            )
-
     if plain:
-        await run_client_plain(uri=uri, token=token, user=user, client_verification=verification)
+        await run_client_plain(uri=uri, token=token, user=user)
         return
     try:
-        await run_client_tui(uri=uri, token=token, user=user, client_verification=verification)
+        await run_client_tui(uri=uri, token=token, user=user)
     except Exception as exc:
         print(f"[warn] TUI failed, falling back to plain mode: {exc}", file=sys.stderr)
-        await run_client_plain(uri=uri, token=token, user=user, client_verification=verification)
+        await run_client_plain(uri=uri, token=token, user=user)

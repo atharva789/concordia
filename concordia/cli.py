@@ -56,33 +56,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="Path for append-only compliance audit log.",
     )
     p.add_argument(
-        "--require-client-claude-check",
-        action="store_true",
-        help="Require each non-host client to provide a fresh local Claude verification probe.",
-    )
-    p.add_argument(
-        "--client-claude-check-max-age-sec",
-        type=float,
-        default=600.0,
-        help="Maximum age (seconds) of client Claude verification proof.",
-    )
-    p.add_argument(
-        "--skip-claude-subscription-check",
-        action="store_true",
-        help="Skip local Claude verification probe on this client before connecting.",
-    )
-    p.add_argument(
-        "--claude-check-command",
-        default="claude -p 'Reply exactly: CONCORDIA_SUB_OK' --dangerously-skip-permissions",
-        help="Local probe command used by clients for Claude verification.",
-    )
-    p.add_argument(
-        "--claude-check-timeout",
-        type=float,
-        default=20.0,
-        help="Timeout in seconds for the local Claude verification probe command.",
-    )
-    p.add_argument(
         "--estimate-token-usage",
         action="store_true",
         help="Enable approximate per-client token usage attribution (estimates only).",
@@ -108,13 +81,12 @@ def _ws_uri(host: str, port: int) -> str:
 
 async def _run_create_party(args: argparse.Namespace) -> None:
     load_env()
-    require_client_claude_check = args.require_client_claude_check or args.compliance_mode == "strict"
 
     report = evaluate_create_party_config(
         compliance_mode=args.compliance_mode,
         attest_commercial_use_rights=args.attest_commercial_use_rights,
         allow_remote_input=args.allow_remote_input,
-        claude_command=args.claude_command,
+        claude_command=args.program,
     )
     for w in report.warnings:
         print(f"[compliance warning] {w}", file=sys.stderr)
@@ -148,12 +120,10 @@ async def _run_create_party(args: argparse.Namespace) -> None:
                 public_host=public_host,
                 invite_port=public_port,
                 project_dir=os.path.expanduser(args.project_dir),
-                claude_command=args.claude_command,
+                claude_command=args.program,
                 compliance_mode=args.compliance_mode,
                 allow_remote_input=args.allow_remote_input,
                 audit_log_path=os.path.expanduser(args.audit_log_path),
-                require_client_claude_check=require_client_claude_check,
-                client_claude_check_max_age_sec=args.client_claude_check_max_age_sec,
                 estimate_token_usage=args.estimate_token_usage,
                 usage_estimate_window_sec=args.usage_estimate_window_sec,
                 usage_estimate_path=os.path.expanduser(args.usage_estimate_path),
@@ -174,10 +144,6 @@ async def _run_create_party(args: argparse.Namespace) -> None:
                     token=token,
                     user=args.user,
                     plain=args.plain,
-                    verify_claude_subscription=not args.skip_claude_subscription_check,
-                    claude_check_command=args.claude_check_command,
-                    claude_check_timeout=args.claude_check_timeout,
-                    require_probe_success=require_client_claude_check,
                 )
                 break
             except Exception:
@@ -194,10 +160,6 @@ async def _run_join(args: argparse.Namespace) -> None:
         invite.token,
         args.user,
         plain=args.plain,
-        verify_claude_subscription=not args.skip_claude_subscription_check,
-        claude_check_command=args.claude_check_command,
-        claude_check_timeout=args.claude_check_timeout,
-        require_probe_success=not args.skip_claude_subscription_check,
     )
 
 

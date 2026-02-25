@@ -22,7 +22,7 @@ It is **not legal advice**.
 - `--compliance-mode strict` is default.
 - Strict mode requires `--attest-commercial-use-rights` before party startup.
 - Remote input is disabled by default (non-host participants are view-only) unless host explicitly passes `--allow-remote-input`.
-- Optional client verification gate is available: `--require-client-claude-check` (fresh local probe required for non-host join).
+- Client join flow does not perform per-client local Claude binary/subscription verification probes.
 - Optional estimate-only usage attribution report is available via `--estimate-token-usage`.
 - Input stream safeguards:
   - max input chunk size

@@ -10,7 +10,7 @@ import time
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Deque, Dict, Optional, Set, Tuple
+from typing import Deque, Dict, Optional, Set
 
 import websockets
 
@@ -36,8 +36,6 @@ class PartyState:
     compliance_mode: str = "strict"
     allow_remote_input: bool = False
     audit_log_path: Optional[str] = None
-    require_client_claude_check: bool = False
-    client_claude_check_max_age_sec: float = 600.0
     estimate_token_usage: bool = False
     usage_estimate_window_sec: float = 8.0
     usage_estimate_path: Optional[str] = None
@@ -208,30 +206,6 @@ class PartyServer:
             }
         )
 
-    def _validate_client_verification(self, user: str, payload: Dict) -> Tuple[bool, str]:
-        if user == self.state.creator:
-            return True, "host_user_exempt"
-        if not self.state.require_client_claude_check:
-            return True, "probe_not_required"
-        if not isinstance(payload, dict):
-            return False, "missing_probe"
-        if payload.get("method") != "local_claude_probe_v1":
-            return False, "invalid_probe_method"
-        if not payload.get("ok", False):
-            return False, "probe_not_ok"
-        checked_at = payload.get("checked_at")
-        if not isinstance(checked_at, (int, float)):
-            return False, "invalid_checked_at"
-        now = time.time()
-        if checked_at > now + 5:
-            return False, "probe_time_in_future"
-        if now - float(checked_at) > float(self.state.client_claude_check_max_age_sec):
-            return False, "probe_too_old"
-        cmd = str(payload.get("command", "")).strip().lower()
-        if "claude" not in cmd:
-            return False, "probe_command_not_claude"
-        return True, "probe_ok"
-
     async def _handle_client_input(self, user: str, websocket: websockets.WebSocketServerProtocol, chunk: bytes) -> None:
         if not chunk:
             return
@@ -276,8 +250,7 @@ class PartyServer:
                         "type": "system",
                         "message": (
                             f"compliance={self.state.compliance_mode} "
-                            f"remote_input={'enabled' if self.state.allow_remote_input else 'disabled'} "
-                            f"client_probe={'required' if self.state.require_client_claude_check else 'optional'}"
+                            f"remote_input={'enabled' if self.state.allow_remote_input else 'disabled'}"
                         ),
                     }
                 )
@@ -306,31 +279,14 @@ class PartyServer:
 
             requested_name = msg.get("user") or "user"
             name = self._reserve_connection_name(requested_name)
-            verification_payload = msg.get("client_verification", {})
-            verification_ok, verification_reason = self._validate_client_verification(name, verification_payload)
             self._append_audit_record(
                 {
                     "ts": time.time(),
-                    "event": "client_join_verification",
+                    "event": "client_join",
                     "user": name,
-                    "accepted": verification_ok,
-                    "reason": verification_reason,
                     "compliance_mode": self.state.compliance_mode,
                 }
             )
-            if not verification_ok:
-                await websocket.send(
-                    encode(
-                        {
-                            "type": "error",
-                            "message": (
-                                "client verification failed: "
-                                f"{verification_reason}. run with local Claude check enabled."
-                            ),
-                        }
-                    )
-                )
-                return
             self.state.connections[name] = websocket
             if name != requested_name:
                 await websocket.send(
@@ -537,8 +493,6 @@ def create_party_state(
     compliance_mode: str,
     allow_remote_input: bool,
     audit_log_path: str,
-    require_client_claude_check: bool,
-    client_claude_check_max_age_sec: float,
     estimate_token_usage: bool,
     usage_estimate_window_sec: float,
     usage_estimate_path: str,
@@ -549,13 +503,11 @@ def create_party_state(
     return PartyState(
         invite=invite,
         creator=creator,
-        program_command=program_command,
+        program_command=claude_command,
         project_dir=project_dir,
         compliance_mode=compliance_mode,
         allow_remote_input=allow_remote_input,
         audit_log_path=audit_log_path,
-        require_client_claude_check=require_client_claude_check,
-        client_claude_check_max_age_sec=client_claude_check_max_age_sec,
         estimate_token_usage=estimate_token_usage,
         usage_estimate_window_sec=usage_estimate_window_sec,
         usage_estimate_path=usage_estimate_path,
@@ -573,8 +525,6 @@ async def run_server(
     compliance_mode: str,
     allow_remote_input: bool,
     audit_log_path: str,
-    require_client_claude_check: bool,
-    client_claude_check_max_age_sec: float,
     estimate_token_usage: bool,
     usage_estimate_window_sec: float,
     usage_estimate_path: str,
@@ -590,8 +540,6 @@ async def run_server(
         compliance_mode,
         allow_remote_input,
         audit_log_path,
-        require_client_claude_check,
-        client_claude_check_max_age_sec,
         estimate_token_usage,
         usage_estimate_window_sec,
         usage_estimate_path,
