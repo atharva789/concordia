@@ -1,9 +1,7 @@
 import asyncio
 import base64
 import os
-import select
 import shutil
-import subprocess
 import sys
 import termios
 import tty
@@ -11,111 +9,58 @@ from typing import List, Optional
 
 from ..client import ClientTransport
 
+RESET = "\033[0m"
+BOLD = "\033[1m"
+DIM = "\033[2m"
+FG_TITLE = "\033[38;5;81m"
+FG_TEXT = "\033[38;5;252m"
+FG_DIM = "\033[38;5;245m"
+FG_OK = "\033[38;5;114m"
+FG_WARN = "\033[38;5;221m"
+FG_ERR = "\033[38;5;203m"
+
 
 def _stderr_line(text: str) -> None:
     sys.stderr.write(text + "\n")
     sys.stderr.flush()
 
 
-ESC = "\x1b"
-RESET = f"{ESC}[0m"
-HUD_BG = f"{ESC}[48;5;238m"
-HUD_FG = f"{ESC}[38;5;252m"
-ACCENT = f"{ESC}[38;5;39m"
-_ALT_SCREEN_SEQUENCES = (
-    b"\x1b[?1049h",
-    b"\x1b[?1049l",
-    b"\x1b[?1047h",
-    b"\x1b[?1047l",
-    b"\x1b[?47h",
-    b"\x1b[?47l",
-)
-
-
-def _copy_to_clipboard(text: str) -> bool:
-    if not text:
-        return False
-    commands = [
-        ["pbcopy"],
-        ["wl-copy"],
-        ["xclip", "-selection", "clipboard"],
-        ["xsel", "--clipboard", "--input"],
-        ["clip"],
-    ]
-    for cmd in commands:
-        try:
-            proc = subprocess.run(cmd, input=text, text=True, capture_output=True)
-        except (FileNotFoundError, OSError):
-            continue
-        if proc.returncode == 0:
-            return True
-    return False
-
-
-def _sanitize_stream_bytes(raw: bytes) -> bytes:
-    clean = raw
-    for seq in _ALT_SCREEN_SEQUENCES:
-        clean = clean.replace(seq, b"")
-    return clean
-
-
-def _read_stdin_chunk(fd: int, size: int = 1024, timeout_sec: float = 0.2) -> bytes:
-    ready, _, _ = select.select([fd], [], [], timeout_sec)
-    if not ready:
-        return b""
-    return os.read(fd, size)
-
-
-def _trim_for_cols(text: str, cols: int) -> str:
-    if cols <= 0:
-        return ""
-    if len(text) <= cols:
-        return text
-    if cols == 1:
-        return text[:1]
-    return text[: cols - 1] + "…"
-
-
-def _pad_line(text: str, cols: int) -> str:
-    visible = _trim_for_cols(text, cols)
-    return visible + (" " * max(cols - len(visible), 0))
-
-
-def _draw_hud(
-    out_fd: int,
-    invite_code: str,
-    main_user: str,
-    users: List[str],
-    clipboard_ok: Optional[bool],
-) -> None:
-    cols = shutil.get_terminal_size((100, 30)).columns
-    users_str = ", ".join(users) if users else "-"
-    host_str = main_user or "-"
-    invite_label = invite_code if invite_code else "(waiting...)"
-    if clipboard_ok is None:
-        clip_status = "pending"
+def _meta_line(kind: str, text: str) -> None:
+    if kind == "system":
+        color = FG_OK
+    elif kind == "invite":
+        color = FG_WARN
+    elif kind == "party":
+        color = FG_DIM
+    elif kind == "error":
+        color = FG_ERR
     else:
-        clip_status = "copied" if clipboard_ok else "copy failed"
-
-    line1 = _pad_line(" CONCORDIA  Ctrl-] disconnect local client ", cols)
-    line2 = _pad_line(f" invite: {invite_label}  [{clip_status}] ", cols)
-    line3 = _pad_line(f" host: {host_str}  users: {users_str} ", cols)
-
-    frame = [
-        f"{HUD_BG}{HUD_FG}{line1}{RESET}",
-        f"{HUD_BG}{ACCENT}{line2}{RESET}",
-        f"{HUD_BG}{HUD_FG}{line3}{RESET}",
-    ]
-
-    seq = [f"{ESC}7"]
-    for idx, line in enumerate(frame, start=1):
-        seq.append(f"{ESC}[{idx};1H{ESC}[2K{line}")
-    seq.append(f"{ESC}8")
-    os.write(out_fd, "".join(seq).encode("utf-8", errors="ignore"))
+        color = FG_TEXT
+    _stderr_line(f"{DIM}[{kind}]{RESET} {color}{text}{RESET}")
 
 
-def _render_intro(out_fd: int) -> None:
-    os.write(out_fd, f"{ESC}[2J{ESC}[H".encode())
+def _render_intro() -> None:
+    cols = max(60, min(shutil.get_terminal_size((100, 30)).columns, 120))
+    inner = cols - 4
+
+    def row(text: str = "") -> str:
+        trimmed = text[:inner]
+        return f"| {trimmed.ljust(inner)} |"
+
+    top = "+" + "-" * (cols - 2) + "+"
+    sys.stdout.write("\x1b[2J\x1b[H")
+    sys.stdout.write(f"{FG_DIM}{top}{RESET}\n")
+    sys.stdout.write(f"{FG_DIM}{row()} {RESET}\n")
+    sys.stdout.write(f"{FG_DIM}| {FG_TITLE}{BOLD}{'CONCORDIA'.ljust(inner)}{RESET}{FG_DIM} |\n")
+    sys.stdout.write(f"{FG_DIM}{row('Shared Claude terminal')}{RESET}\n")
+    sys.stdout.write(f"{FG_DIM}{row()}{RESET}\n")
+    sys.stdout.write(f"{FG_DIM}{row('Controls: Ctrl-] disconnects local client')}{RESET}\n")
+    sys.stdout.write(f"{FG_DIM}{row('Waiting for session bootstrap...')}{RESET}\n")
+    sys.stdout.write(f"{FG_DIM}{row()}{RESET}\n")
+    sys.stdout.write(f"{FG_DIM}{top}{RESET}\n\n")
+    sys.stdout.write(f"{FG_TEXT}Startup log{RESET}\n")
+    sys.stdout.write(f"{FG_DIM}{'-' * 22}{RESET}\n")
+    sys.stdout.flush()
 
 
 async def run_tui(transport: ClientTransport) -> None:
@@ -154,18 +99,20 @@ async def run_tui(transport: ClientTransport) -> None:
                     _draw_hud(out_fd, invite_code, main_user, users, invite_copied)
             elif mtype == "invite":
                 invite_code = msg.get("code", "")
-                if invite_code:
-                    invite_copied = _copy_to_clipboard(invite_code)
-                    _draw_hud(out_fd, invite_code, main_user, users, invite_copied)
+                if invite_code and not printed_invite:
+                    _meta_line("invite", invite_code)
+                    printed_invite = True
             elif mtype == "participants":
                 main_user = msg.get("main_user", "")
                 users = list(msg.get("users", []))
-                _draw_hud(out_fd, invite_code, main_user, users, invite_copied)
+                if users and not printed_party:
+                    _meta_line("party", f"host={main_user} users={', '.join(users)}")
+                    printed_party = True
             elif mtype == "system":
                 # Ignore routine system chatter to keep terminal rendering clean.
                 pass
             elif mtype == "error":
-                _stderr_line(f"[error] {msg.get('message', '')}")
+                _meta_line("error", msg.get("message", ""))
 
         connected = False
 
@@ -194,7 +141,7 @@ async def run_tui(transport: ClientTransport) -> None:
     _render_intro(out_fd)
     await transport.connect()
     connected = True
-    _draw_hud(out_fd, invite_code, main_user, users, invite_copied)
+    _meta_line("system", "connected")
 
     recv_task = asyncio.create_task(_receiver())
     send_task = asyncio.create_task(_sender_raw())

@@ -22,7 +22,8 @@ class ClientTransport:
 
     async def connect(self) -> None:
         self._websocket = await websockets.connect(self.uri, compression=None, max_queue=256)
-        await self._websocket.send(encode({"type": "hello", "user": self.user, "token": self.token}))
+        hello = {"type": "hello", "user": self.user, "token": self.token}
+        await self._websocket.send(encode(hello))
 
     async def close(self) -> None:
         if self._websocket:
@@ -136,7 +137,12 @@ async def run_client_tui(uri: str, token: str, user: str) -> None:
     await run_tui(transport=ClientTransport(uri=uri, token=token, user=user))
 
 
-async def run_client(uri: str, token: str, user: str, plain: bool = False) -> None:
+async def run_client(
+    uri: str,
+    token: str,
+    user: str,
+    plain: bool = False,
+) -> None:
     if plain:
         await run_client_plain(uri=uri, token=token, user=user)
         return
