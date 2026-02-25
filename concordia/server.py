@@ -376,7 +376,7 @@ class PartyServer:
             self.state.claude_stdout = process.stdout
             self.state.claude_stderr = process.stderr
 
-            self._claude_reader_task = asyncio.create_task(self._read_claude_and_broadcast())
+            self._claude_reader_task = asyncio.create_task(self._read_program_and_broadcast())
             await self._broadcast({"type": "system", "message": "program started (interactive mode)"})
             return True
         except Exception as exc:
@@ -396,7 +396,7 @@ class PartyServer:
         except Exception as exc:
             await self._broadcast({"type": "error", "message": f"Failed to write to program PTY: {exc}"})
 
-    async def _read_claude_and_broadcast(self) -> None:
+    async def _read_program_and_broadcast(self) -> None:
         loop = asyncio.get_running_loop()
         while True:
             if self.state.claude_master_fd < 0:
