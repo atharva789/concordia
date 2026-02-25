@@ -100,6 +100,17 @@ python3 -m pip install --user .
 - Client command: `concordia_client`
 - Use `--plain` for legacy non-TUI mode.
 
+## Permissions model (default-safe)
+
+- Default mode is safety-first for remote participants.
+- For shell programs (`bash`, `zsh`, `sh`, `fish`), remote input is filtered:
+  - destructive commands are blocked
+  - directory-changing commands are blocked
+  - paths that escape `--project-dir` are blocked
+- For non-shell programs, remote participants are view-only by default.
+- Host can disable these guards with `--dangerously-skip-permissions`.
+- When that dangerous flag is used, Concordia shows an explicit risk confirmation prompt before startup.
+
 ## Notes
 
 - `--program` is required when creating a party.

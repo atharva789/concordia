@@ -3,9 +3,11 @@ import base64
 import contextlib
 import os
 import pty
+import shlex
 import sys
+from pathlib import Path
 from dataclasses import dataclass, field
-from typing import Dict, Optional
+from typing import Dict, Optional, Set, Tuple
 
 import websockets
 
@@ -21,6 +23,7 @@ class PartyState:
     creator: str
     program_command: str
     project_dir: str
+    dangerously_skip_permissions: bool = False
     claude_start_cmd: str = ""
     claude_master_fd: int = -1
     claude_process: Optional[asyncio.subprocess.Process] = None
@@ -31,12 +34,57 @@ class PartyState:
 
 
 class PartyServer:
+    SHELL_NAMES: Set[str] = {"bash", "zsh", "sh", "fish"}
+    BLOCKED_COMMANDS: Set[str] = {
+        "rm",
+        "rmdir",
+        "mv",
+        "chmod",
+        "chown",
+        "chgrp",
+        "unlink",
+        "truncate",
+        "dd",
+        "mkfs",
+        "mount",
+        "umount",
+        "sudo",
+        "su",
+        "reboot",
+        "shutdown",
+        "poweroff",
+        "init",
+        "kill",
+        "killall",
+        "pkill",
+    }
+    BLOCKED_INTERPRETERS: Set[str] = {
+        "bash",
+        "zsh",
+        "sh",
+        "fish",
+        "python",
+        "python3",
+        "node",
+        "ruby",
+        "perl",
+        "lua",
+        "pwsh",
+        "powershell",
+    }
+    SAFE_GIT_SUBCOMMANDS: Set[str] = {"status", "diff", "log", "show", "branch", "rev-parse", "fetch", "remote"}
+
     def __init__(self, state: PartyState):
         self.state = state
-        self.start_cmd: str = (state.program_command or "").strip() or "claude --dangerously-skip-permissions"
+        self.start_cmd: str = (state.program_command or "").strip() or "bash"
         self.state.claude_start_cmd = self.start_cmd
         self._write_lock = asyncio.Lock()
         self._claude_reader_task: Optional[asyncio.Task] = None
+        self._permission_notice_sent: Set[str] = set()
+        self._remote_line_buffers: Dict[str, bytearray] = {}
+        self._project_root = Path(self.state.project_dir).resolve()
+        self._program_name = self._extract_program_name(self.start_cmd)
+        self._program_is_shell = self._program_name in self.SHELL_NAMES
 
     def _reserve_connection_name(self, requested: str) -> str:
         base = (requested or "user").strip() or "user"
@@ -62,6 +110,27 @@ class PartyServer:
                 if not self.state.claude_process:
                     await self._broadcast({"type": "error", "message": "Program process missing"})
                     return
+                if not self.state.dangerously_skip_permissions:
+                    if self._program_is_shell:
+                        await self._broadcast(
+                            {
+                                "type": "system",
+                                "message": (
+                                    "safe permissions ON: remote shell input filtered; "
+                                    f"root scope is {self._project_root}"
+                                ),
+                            }
+                        )
+                    else:
+                        await self._broadcast(
+                            {
+                                "type": "system",
+                                "message": (
+                                    "safe permissions ON: remote participants are view-only "
+                                    "for non-shell programs. Use --dangerously-skip-permissions to bypass."
+                                ),
+                            }
+                        )
                 await self.state.claude_process.wait()
                 await self._broadcast({"type": "system", "message": "program process exited"})
             finally:
@@ -109,7 +178,7 @@ class PartyServer:
 
             async for raw in websocket:
                 if isinstance(raw, (bytes, bytearray)):
-                    await self._write_input_bytes(bytes(raw))
+                    await self._handle_client_input(name, websocket, bytes(raw))
                     continue
                 msg = decode(raw)
                 mtype = msg.get("type")
@@ -120,7 +189,7 @@ class PartyServer:
                     except Exception:
                         await websocket.send(encode({"type": "error", "message": "invalid input_bytes payload"}))
                         continue
-                    await self._write_input_bytes(chunk)
+                    await self._handle_client_input(name, websocket, chunk)
                 elif mtype == "ping":
                     await websocket.send(encode({"type": "pong"}))
         except websockets.ConnectionClosed:
@@ -128,8 +197,123 @@ class PartyServer:
         finally:
             if name and name in self.state.connections:
                 self.state.connections.pop(name, None)
+                self._remote_line_buffers.pop(name, None)
+                self._permission_notice_sent.discard(name)
                 await self._broadcast({"type": "system", "message": f"{name} left"})
                 await self._broadcast_participants()
+
+    def _extract_program_name(self, command: str) -> str:
+        try:
+            parts = shlex.split(command)
+        except ValueError:
+            return ""
+        if not parts:
+            return ""
+        return Path(parts[0]).name.lower()
+
+    def _path_within_project_root(self, token: str) -> bool:
+        if not token:
+            return True
+        if token.startswith("~"):
+            return False
+        if token.startswith(".."):
+            return False
+        p = Path(token)
+        resolved = p.resolve() if p.is_absolute() else (self._project_root / p).resolve()
+        return resolved == self._project_root or self._project_root in resolved.parents
+
+    def _validate_remote_shell_line(self, line: str) -> Tuple[bool, str]:
+        stripped = line.strip()
+        if not stripped:
+            return True, ""
+        if any(op in stripped for op in ("&&", "||", ";", "|", "`", "$(", ">", "<")):
+            return False, "command chaining and subshells are blocked in safe mode"
+        try:
+            parts = shlex.split(stripped)
+        except ValueError:
+            return False, "unable to parse command"
+        if not parts:
+            return True, ""
+        cmd = parts[0].lower()
+        if cmd in {"cd", "pushd", "popd"}:
+            return False, "changing directories is blocked in safe mode"
+        if cmd in self.BLOCKED_COMMANDS:
+            return False, f"'{cmd}' is blocked in safe mode"
+        if cmd in self.BLOCKED_INTERPRETERS:
+            return False, f"spawning interpreter '{cmd}' is blocked in safe mode"
+        if cmd == "git":
+            sub = parts[1].lower() if len(parts) > 1 else ""
+            if sub and sub not in self.SAFE_GIT_SUBCOMMANDS:
+                return False, f"git subcommand '{sub}' is blocked in safe mode"
+        for tok in parts[1:]:
+            if tok.startswith("-"):
+                continue
+            if "/" in tok or tok.startswith("."):
+                if not self._path_within_project_root(tok):
+                    return False, f"path '{tok}' escapes project root"
+        return True, ""
+
+    async def _handle_remote_shell_input(
+        self,
+        user: str,
+        websocket: websockets.WebSocketServerProtocol,
+        chunk: bytes,
+    ) -> None:
+        if not chunk:
+            return
+        buf = self._remote_line_buffers.setdefault(user, bytearray())
+        out = bytearray()
+        for b in chunk:
+            if b in (0x08, 0x7F):  # backspace
+                if buf:
+                    buf.pop()
+                out.append(b)
+                continue
+            if b in (0x0D, 0x0A):  # newline / carriage return
+                line = buf.decode("utf-8", errors="ignore")
+                allowed, reason = self._validate_remote_shell_line(line)
+                if allowed:
+                    out.append(0x0A)
+                else:
+                    await websocket.send(encode({"type": "error", "message": f"blocked by safe permissions: {reason}"}))
+                    out.append(0x03)  # Ctrl-C to clear current line at PTY
+                buf.clear()
+                continue
+            if b == 0x09 or (0x20 <= b <= 0x7E):  # tab or printable ascii
+                buf.append(b)
+                out.append(b)
+                continue
+            # Drop other control bytes in safe mode.
+        if out:
+            await self._write_input_bytes(bytes(out))
+
+    async def _handle_client_input(
+        self,
+        user: str,
+        websocket: websockets.WebSocketServerProtocol,
+        chunk: bytes,
+    ) -> None:
+        if not chunk:
+            return
+        if user == self.state.creator or self.state.dangerously_skip_permissions:
+            await self._write_input_bytes(chunk)
+            return
+        if not self._program_is_shell:
+            if user not in self._permission_notice_sent:
+                self._permission_notice_sent.add(user)
+                await websocket.send(
+                    encode(
+                        {
+                            "type": "error",
+                            "message": (
+                                "safe permissions enabled: remote input is disabled for non-shell programs. "
+                                "Host can use --dangerously-skip-permissions to bypass."
+                            ),
+                        }
+                    )
+                )
+            return
+        await self._handle_remote_shell_input(user, websocket, chunk)
 
     async def _broadcast(self, message: Dict) -> None:
         if not self.state.connections:
@@ -256,6 +440,7 @@ def create_party_state(
     invite_port: int,
     project_dir: str,
     program_command: str,
+    dangerously_skip_permissions: bool,
     token: Optional[str] = None,
 ) -> PartyState:
     token = token or generate_token(16)
@@ -265,6 +450,7 @@ def create_party_state(
         creator=creator,
         program_command=program_command,
         project_dir=project_dir,
+        dangerously_skip_permissions=dangerously_skip_permissions,
     )
 
 
@@ -276,6 +462,7 @@ async def run_server(
     invite_port: int,
     project_dir: str,
     program_command: str,
+    dangerously_skip_permissions: bool,
     token: Optional[str] = None,
 ) -> None:
     load_env()
@@ -285,6 +472,7 @@ async def run_server(
         invite_port,
         project_dir,
         program_command,
+        dangerously_skip_permissions,
         token=token,
     )
     server = PartyServer(state)

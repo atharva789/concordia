@@ -1,6 +1,7 @@
 import argparse
 import asyncio
 import os
+import sys
 from pathlib import Path
 
 from pyngrok import ngrok
@@ -26,12 +27,17 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--program",
         default=None,
-        help="Program/command to run in the shared PTY (create-party), e.g. \"claude --dangerously-skip-permissions\"",
+        help="Program/command to run in the shared PTY (create-party), e.g. \"bash\"",
     )
     p.add_argument("--project-dir", default=str(Path.cwd()), help="Project directory the shared program should operate in")
     p.add_argument("--plain", action="store_true", help="Use legacy non-TUI client mode")
     p.add_argument("--no-local-repl", action="store_true", help="Disable local REPL for creator")
     p.add_argument("--ngrok", action="store_true", help="Deprecated: ngrok is always enabled for party creation.")
+    p.add_argument(
+        "--dangerously-skip-permissions",
+        action="store_true",
+        help="Disable safe permission guards for remote participants. Use at your own risk.",
+    )
 
     return p
 
@@ -46,8 +52,11 @@ async def _run_create_party(args: argparse.Namespace) -> None:
     if not program:
         raise SystemExit(
             "Missing required --program for --create-party. "
-            "Example: --program \"claude --dangerously-skip-permissions\""
+            "Example: --program \"bash\""
         )
+    if args.dangerously_skip_permissions:
+        if not await _confirm_dangerous_skip_permissions():
+            raise SystemExit("Cancelled.")
 
     authtoken = os.environ.get("NGROK_AUTHTOKEN", "").strip()
     if not authtoken:
@@ -75,6 +84,7 @@ async def _run_create_party(args: argparse.Namespace) -> None:
                 invite_port=public_port,
                 project_dir=os.path.expanduser(args.project_dir),
                 program_command=program,
+                dangerously_skip_permissions=args.dangerously_skip_permissions,
                 token=token,
             )
         finally:
@@ -104,6 +114,25 @@ async def _run_join(args: argparse.Namespace) -> None:
     invite = parse_invite(args.join)
     uri = _ws_uri(invite.host, invite.port)
     await run_client(uri, invite.token, args.user, plain=args.plain)
+
+
+async def _confirm_dangerous_skip_permissions() -> bool:
+    warning = (
+        "\n"
+        "================================= DANGER =================================\n"
+        "You started Concordia with --dangerously-skip-permissions.\n"
+        "\n"
+        "This disables remote safety guards. Participants may be able to:\n"
+        "- run destructive commands\n"
+        "- modify or delete files\n"
+        "- operate outside your project root\n"
+        "\n"
+        "Continue only if you understand and accept these risks.\n"
+        "==========================================================================\n"
+    )
+    print(warning, file=sys.stderr)
+    answer = await asyncio.to_thread(input, "Type YES to continue: ")
+    return answer.strip().upper() == "YES"
 
 
 def main() -> None:
