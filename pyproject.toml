@@ -13,6 +13,19 @@ classifiers = [
 ]
 license = { file = "LICENCSE" }
 
+dependencies = [
+  "websockets>=12.0",
+  "python-dotenv>=1.0.0",
+  "requests>=2.31.0",
+  "pyngrok>=7.0.0",
+  "prompt_toolkit>=3.0.0",
+]
+
+[project.scripts]
+concordia = "concordia.cli:main"
+concordia_host = "concordia.host_cli:main"
+concordia_client = "concordia.client_cli:main"
+
 [project.urls]
 Homepage = "https://github.com/atharva789/concordia"
 Issues = "https://github.com/atharva789/concordia/issues"
