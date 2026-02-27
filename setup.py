@@ -18,7 +18,7 @@ if not match:
 VERSION = match.group(1)
 
 setup(
-    name="concordia",
+    name="concordia_tui",
     version=VERSION,
     description="Multi-user shared terminal",
     long_description=README,

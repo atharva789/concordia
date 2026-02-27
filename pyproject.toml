@@ -1,5 +1,5 @@
 [project]
-name = "concordia"
+name = "concordia_tui"
 version = "0.0.1"
 authors = [
   { name = "Concordia Contributors", email = "atharva.jgupta@gmail.com" },
