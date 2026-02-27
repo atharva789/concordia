@@ -26,14 +26,7 @@ build:
 release:
 	@if [ -z "$(VERSION)" ]; then echo "VERSION is required: make release VERSION=x.y.z"; exit 1; fi
 	@git diff --quiet || (echo "Working tree not clean"; exit 1)
-	@python - <<'PY'
-from pathlib import Path
-import re
-path = Path("concordia/__init__.py")
-text = path.read_text(encoding="utf-8")
-new = re.sub(r'^__version__\\s*=\\s*\"[^\"]+\"', f'__version__ = \"{VERSION}\"', text, flags=re.M)
-path.write_text(new, encoding="utf-8")
-PY
+	@python -c "from pathlib import Path; import re; p=Path('concordia/__init__.py'); t=p.read_text(encoding='utf-8'); t=re.sub(r'^__version__\\s*=\\s*\\\"[^\\\"]+\\\"', f'__version__ = \\\"{VERSION}\\\"', t, flags=re.M); p.write_text(t, encoding='utf-8')"
 	@git add concordia/__init__.py
 	@git commit -m "Release v$(VERSION)"
 	@git tag -a v$(VERSION) -m "v$(VERSION)"
