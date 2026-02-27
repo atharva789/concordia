@@ -1,4 +1,5 @@
 .PHONY: install help clean build release
+ .PHONY: publish
 
 install:
 	@bash install.sh
@@ -11,6 +12,7 @@ help:
 	@echo "  make host       - Start a party (host)"
 	@echo "  make build      - Build source/wheel distributions"
 	@echo "  make release    - Bump version, tag, and push (VERSION=x.y.z)"
+	@echo "  make publish    - Trigger GitHub Actions publish (requires gh auth)"
 	@echo "  make help       - Show this help"
 	@echo ""
 	@echo "For client commands, use concordia_client directly"
@@ -29,5 +31,8 @@ release:
 	@git commit -m "Release v$(VERSION)"
 	@git tag -a v$(VERSION) -m "v$(VERSION)"
 	@git push origin main --tags
+
+publish:
+	@gh workflow run workflow.yml -f publish=true
 
 .DEFAULT_GOAL := help
