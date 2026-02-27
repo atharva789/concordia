@@ -11,8 +11,7 @@ classifiers = [
   "Programming Language :: Python :: 3",
   "Operating System :: OS Independent",
 ]
-license = "Proprietary"
-license-files = ["LICEN[CS]E*"]
+license = { file = "LICENCSE" }
 
 [project.urls]
 Homepage = "https://github.com/atharva789/concordia"
