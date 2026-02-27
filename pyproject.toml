@@ -1,8 +1,8 @@
 [project]
 name = "concordia"
-version = "0.1.0"
+version = "0.0.1"
 authors = [
-  { name = "Concordia Contributors" },
+  { name = "Concordia Contributors", email = "atharva.jgupta@gmail.com" },
 ]
 description = "Multi-user shared terminal"
 readme = "README.md"

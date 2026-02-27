@@ -24,6 +24,7 @@ setup(
     long_description=README,
     long_description_content_type="text/markdown",
     author="Concordia Contributors",
+    author_email="atharva.jgupta@gmail.com",
     license="Proprietary",
     packages=find_packages(exclude=("tests*", "docs*")),
     include_package_data=True,
