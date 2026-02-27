@@ -1,3 +1,23 @@
+[project]
+name = "concordia"
+version = "0.1.0"
+authors = [
+  { name = "Concordia Contributors" },
+]
+description = "Multi-user shared terminal"
+readme = "README.md"
+requires-python = ">=3.9"
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Operating System :: OS Independent",
+]
+license = { text = "Proprietary" }
+license-files = ["LICEN[CS]E*"]
+
+[project.urls]
+Homepage = "https://github.com/atharva789/concordia"
+Issues = "https://github.com/atharva789/concordia/issues"
+
 [build-system]
 requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
