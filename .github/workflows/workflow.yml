@@ -1,6 +1,12 @@
 name: build
 
 on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Publish to PyPI (requires PYPI_API_TOKEN)"
+        required: false
+        default: "false"
   push:
     branches:
       - main
@@ -25,7 +31,9 @@ jobs:
           python -m twine check dist/*
 
   publish:
-    if: startsWith(github.ref, 'refs/tags/v') && secrets.PYPI_API_TOKEN != ''
+    if: |
+      (startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && github.event.inputs.publish == 'true'))
+      && secrets.PYPI_API_TOKEN != ''
     needs: build
     runs-on: ubuntu-latest
     permissions:
