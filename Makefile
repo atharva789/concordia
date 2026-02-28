@@ -27,7 +27,7 @@ release:
 	@if [ -z "$(VERSION)" ]; then echo "VERSION is required: make release VERSION=x.y.z"; exit 1; fi
 	@git diff --quiet || (echo "Working tree not clean"; exit 1)
 	@python3 -c "from pathlib import Path; import re; v='$(VERSION)'; p=Path('concordia/__init__.py'); t=p.read_text(encoding='utf-8'); t=re.sub(r'^__version__\\s*=\\s*\\\"[^\\\"]+\\\"', f'__version__ = \"{v}\"', t, flags=re.M); p.write_text(t, encoding='utf-8'); p=Path('pyproject.toml'); t=p.read_text(encoding='utf-8'); t=re.sub(r'^version\\s*=\\s*\\\"[^\\\"]+\\\"', f'version = \"{v}\"', t, flags=re.M); p.write_text(t, encoding='utf-8')"
-	@git add concordia/__init__.py
+	@git add concordia/__init__.py pyproject.toml
 	@git commit -m "Release v$(VERSION)"
 	@git tag -a v$(VERSION) -m "v$(VERSION)"
 	@git push origin main --tags
