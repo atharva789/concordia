@@ -11,7 +11,7 @@ from .compliance import evaluate_create_party_config
 from .config import load_env
 from .debug import debug_print
 from .server import run_server
-from .utils import default_username, generate_token, parse_invite
+from .utils import copy_to_clipboard, default_username, format_invite, generate_token, parse_invite
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -110,6 +110,11 @@ async def _run_create_party(args: argparse.Namespace) -> None:
     debug_print(f"ngrok tunnel created: {ngrok_tunnel.public_url}")
 
     token = generate_token(16)
+    invite_code = format_invite(public_host, public_port, token)
+    if copy_to_clipboard(invite_code):
+        debug_print("invite code copied to clipboard")
+    else:
+        debug_print("failed to copy invite code to clipboard")
 
     async def run_with_cleanup():
         try:

@@ -1,4 +1,5 @@
 import os
+import subprocess
 import secrets
 import socket
 from dataclasses import dataclass
@@ -55,3 +56,23 @@ def parse_invite(code: str) -> Invite:
         raise ValueError("Invite code must include host:port/token")
     host, port_str = host_port.rsplit(":", 1)
     return Invite(host=host, port=int(port_str), token=token)
+
+
+def copy_to_clipboard(text: str) -> bool:
+    if not text:
+        return False
+    commands = [
+        ["pbcopy"],
+        ["wl-copy"],
+        ["xclip", "-selection", "clipboard"],
+        ["xsel", "--clipboard", "--input"],
+        ["clip"],
+    ]
+    for cmd in commands:
+        try:
+            proc = subprocess.run(cmd, input=text, text=True, capture_output=True)
+        except (FileNotFoundError, OSError):
+            continue
+        if proc.returncode == 0:
+            return True
+    return False
